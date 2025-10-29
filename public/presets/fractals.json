@@ -1,0 +1,88 @@
+[
+  {
+    "id": "mandelbrot-classic",
+    "name": "Classic Mandelbrot",
+    "description": "The iconic full view of the Mandelbrot set",
+    "type": "mandelbrot",
+    "center": { "real": -0.5, "imaginary": 0 },
+    "zoom": 1,
+    "iterations": 100,
+    "colorScheme": {
+      "id": "classic",
+      "name": "Classic",
+      "colors": ["#000033", "#000055", "#0000ff", "#0055ff", "#00ffff", "#55ff00", "#ffff00", "#ff5500", "#ff0000"],
+      "smooth": true,
+      "histogram": false
+    }
+  },
+  {
+    "id": "mandelbrot-seahorse",
+    "name": "Seahorse Valley",
+    "description": "Detailed view of the famous seahorse valley region",
+    "type": "mandelbrot",
+    "center": { "real": -0.75, "imaginary": 0.1 },
+    "zoom": 50,
+    "iterations": 200,
+    "colorScheme": {
+      "id": "sunset",
+      "name": "Sunset",
+      "colors": ["#ff0000", "#ff8800", "#ffff00", "#88ff00", "#00ff00"],
+      "smooth": true,
+      "histogram": true
+    }
+  },
+  {
+    "id": "mandelbrot-elephant",
+    "name": "Elephant Valley",
+    "description": "The elephant valley - a beautiful detailed region",
+    "type": "mandelbrot",
+    "center": { "real": 0.25, "imaginary": 0 },
+    "zoom": 100,
+    "iterations": 300,
+    "colorScheme": {
+      "id": "electric",
+      "name": "Electric",
+      "colors": ["#000000", "#440088", "#8800ff", "#ff00ff", "#ffff00", "#ffffff"],
+      "smooth": true,
+      "histogram": false
+    }
+  },
+  {
+    "id": "julia-classic",
+    "name": "Julia Set - Classic",
+    "description": "Beautiful Julia set with c = -0.8 + 0.156i",
+    "type": "julia",
+    "center": { "real": 0, "imaginary": 0 },
+    "zoom": 1,
+    "iterations": 150,
+    "params": {
+      "c": { "real": -0.8, "imaginary": 0.156 }
+    },
+    "colorScheme": {
+      "id": "ocean",
+      "name": "Ocean",
+      "colors": ["#000033", "#003366", "#006699", "#0099cc", "#00ccff"],
+      "smooth": true,
+      "histogram": false
+    }
+  },
+  {
+    "id": "julia-dragon",
+    "name": "Julia Set - Dragon",
+    "description": "Dragon-like Julia set with c = -0.4 + 0.6i",
+    "type": "julia",
+    "center": { "real": 0, "imaginary": 0 },
+    "zoom": 1,
+    "iterations": 200,
+    "params": {
+      "c": { "real": -0.4, "imaginary": 0.6 }
+    },
+    "colorScheme": {
+      "id": "fire",
+      "name": "Fire",
+      "colors": ["#000000", "#330000", "#660000", "#990000", "#cc0000", "#ff0000", "#ff3300", "#ff6600", "#ff9900", "#ffcc00", "#ffff00"],
+      "smooth": true,
+      "histogram": true
+    }
+  }
+]

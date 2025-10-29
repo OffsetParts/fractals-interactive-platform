@@ -1,0 +1,28 @@
+# GPU Server Dockerfile (for Compute Engine with GPU)
+FROM nvidia/cuda:11.8-devel-ubuntu20.04
+
+# Install Node.js
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Copy source code
+COPY . .
+
+# Build TypeScript
+RUN npm run server:build
+
+# Expose port
+EXPOSE 3001
+
+# Start server
+CMD ["npm", "run", "server:start"]
