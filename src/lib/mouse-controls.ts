@@ -1,6 +1,6 @@
 /**
  * Mouse Controls for Fractal Canvas
- * Handles wheel zoom and drag-pan with inertial decay
+ * Frame-rate independent with debounced rendering
  */
 
 export interface ViewportState {
@@ -18,8 +18,18 @@ export class MouseControls {
   private lastMouseX = 0;
   private lastMouseY = 0;
   private animationFrameId: number | null = null;
-  private friction = 0.90; // Reduced from 0.95 for slower pan momentum
-  private zoomSpeed = 0.5; // Reduced from 1.05 for gentler zoom
+  
+  // Optimized for smooth feel regardless of render speed
+  private friction = 0.92; // Momentum decay - lower = stops faster
+  private zoomSpeed = 1.08; // Zoom per wheel tick (1.08 = 8% per tick)
+  private minZoom = 0.1;
+  private maxZoom = 1000;
+  
+  // Debouncing to prevent render during rapid input
+  private lastEmitTime = 0;
+  private emitDelay = 16; // ~60fps max emit rate (independent of actual render speed)
+  private pendingEmit = false;
+  
   private tweenProgress = 0;
   private isTweening = false;
 
@@ -41,13 +51,13 @@ export class MouseControls {
   }
 
   private setupEventListeners() {
-    this.canvas.addEventListener('wheel', (e) => this.onWheel(e), false);
+    this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
     this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
     this.canvas.addEventListener('mouseup', () => this.onMouseUp());
     this.canvas.addEventListener('mouseleave', () => this.onMouseUp());
-    this.canvas.addEventListener('touchstart', (e) => this.onTouchStart(e));
-    this.canvas.addEventListener('touchmove', (e) => this.onTouchMove(e));
+    this.canvas.addEventListener('touchstart', (e) => this.onTouchStart(e), { passive: false });
+    this.canvas.addEventListener('touchmove', (e) => this.onTouchMove(e), { passive: false });
     this.canvas.addEventListener('touchend', () => this.onTouchEnd());
   }
 
@@ -62,15 +72,22 @@ export class MouseControls {
     const worldX = (mouseX - this.canvas.width / 2) / this.viewport.zoom + this.viewport.x;
     const worldY = (mouseY - this.canvas.height / 2) / this.viewport.zoom + this.viewport.y;
 
-    // Apply zoom (inverted for natural scrolling direction)
-    const zoomFactor = event.deltaY > 0 ? 1 / this.zoomSpeed : this.zoomSpeed;
-    this.viewport.zoom *= zoomFactor;
+    // Apply zoom (smaller steps for smoother feel)
+    const direction = event.deltaY > 0 ? -1 : 1;
+    const zoomFactor = direction > 0 ? this.zoomSpeed : 1 / this.zoomSpeed;
+    
+    const newZoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.viewport.zoom * zoomFactor));
+    
+    // Only update if zoom changed significantly
+    if (Math.abs(newZoom - this.viewport.zoom) > 0.0001) {
+      this.viewport.zoom = newZoom;
 
-    // Keep world point under cursor
-    this.viewport.x = worldX - (mouseX - this.canvas.width / 2) / this.viewport.zoom;
-    this.viewport.y = worldY - (mouseY - this.canvas.height / 2) / this.viewport.zoom;
+      // Keep world point under cursor
+      this.viewport.x = worldX - (mouseX - this.canvas.width / 2) / this.viewport.zoom;
+      this.viewport.y = worldY - (mouseY - this.canvas.height / 2) / this.viewport.zoom;
 
-    this.emitChange();
+      this.emitChangeDebounced();
+    }
   }
 
   private onMouseDown(event: MouseEvent) {
@@ -92,21 +109,22 @@ export class MouseControls {
     const deltaX = currentX - this.lastMouseX;
     const deltaY = currentY - this.lastMouseY;
 
-    // Convert screen space delta to world space
+    // Screen-relative movement scaled by zoom
+    // At higher zoom, smaller screen movements = larger world movements (feels natural)
     const worldDeltaX = -deltaX / this.viewport.zoom;
     const worldDeltaY = -deltaY / this.viewport.zoom;
 
     this.viewport.x += worldDeltaX;
     this.viewport.y += worldDeltaY;
 
-    // Store velocity for inertial decay
-    this.viewport.velocityX = worldDeltaX;
-    this.viewport.velocityY = worldDeltaY;
+    // Store velocity for inertial decay (scaled down for smoothness)
+    this.viewport.velocityX = worldDeltaX * 0.5;
+    this.viewport.velocityY = worldDeltaY * 0.5;
 
     this.lastMouseX = currentX;
     this.lastMouseY = currentY;
 
-    this.emitChange();
+    this.emitChangeDebounced();
   }
 
   private onMouseUp() {
@@ -115,6 +133,7 @@ export class MouseControls {
 
   private onTouchStart(event: TouchEvent) {
     if (event.touches.length === 1) {
+      event.preventDefault();
       this.isDragging = true;
       const rect = this.canvas.getBoundingClientRect();
       const touch = event.touches[0];
@@ -128,6 +147,7 @@ export class MouseControls {
   private onTouchMove(event: TouchEvent) {
     if (!this.isDragging || event.touches.length !== 1) return;
 
+    event.preventDefault();
     const rect = this.canvas.getBoundingClientRect();
     const touch = event.touches[0];
     const currentX = touch.clientX - rect.left;
@@ -142,13 +162,13 @@ export class MouseControls {
     this.viewport.x += worldDeltaX;
     this.viewport.y += worldDeltaY;
 
-    this.viewport.velocityX = worldDeltaX;
-    this.viewport.velocityY = worldDeltaY;
+    this.viewport.velocityX = worldDeltaX * 0.5;
+    this.viewport.velocityY = worldDeltaY * 0.5;
 
     this.lastMouseX = currentX;
     this.lastMouseY = currentY;
 
-    this.emitChange();
+    this.emitChangeDebounced();
   }
 
   private onTouchEnd() {
@@ -160,14 +180,28 @@ export class MouseControls {
       // Update tweening if active
       this.updateTween();
 
-      if (Math.abs(this.viewport.velocityX) > 0.0001 || Math.abs(this.viewport.velocityY) > 0.0001) {
+      // Apply inertial decay
+      const velocityMagnitude = Math.sqrt(
+        this.viewport.velocityX ** 2 + this.viewport.velocityY ** 2
+      );
+
+      if (velocityMagnitude > 0.0001) {
         this.viewport.x += this.viewport.velocityX;
         this.viewport.y += this.viewport.velocityY;
 
         this.viewport.velocityX *= this.friction;
         this.viewport.velocityY *= this.friction;
 
-        this.emitChange();
+        this.emitChangeDebounced();
+      }
+
+      // Handle pending emit
+      if (this.pendingEmit) {
+        const now = Date.now();
+        if (now - this.lastEmitTime >= this.emitDelay) {
+          this.emitChange();
+          this.pendingEmit = false;
+        }
       }
 
       this.animationFrameId = requestAnimationFrame(animate);
@@ -176,7 +210,21 @@ export class MouseControls {
     this.animationFrameId = requestAnimationFrame(animate);
   }
 
+  /**
+   * Debounced emit - only emits changes at max 60fps to prevent
+   * overwhelming slow renderers
+   */
+  private emitChangeDebounced() {
+    const now = Date.now();
+    if (now - this.lastEmitTime >= this.emitDelay) {
+      this.emitChange();
+    } else {
+      this.pendingEmit = true;
+    }
+  }
+
   private emitChange() {
+    this.lastEmitTime = Date.now();
     this.onViewportChange(this.viewport);
   }
 

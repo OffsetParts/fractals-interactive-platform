@@ -1,10 +1,5 @@
 import { User } from '../../types';
 
-interface LoginCredentials {
-  email: string;
-  password: string;
-}
-
 interface AuthToken {
   token: string;
   expiresAt: Date;
@@ -246,6 +241,7 @@ export class AuthService {
 
   // Middleware helper
   static createAuthMiddleware(authService: AuthService) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return async (req: any, res: any, next: any) => {
       const authHeader = req.headers.authorization;
       

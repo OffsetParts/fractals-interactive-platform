@@ -137,7 +137,7 @@ function equationToLatex(equation: string): string {
 }
 
 /**
- * Evaluate complex number equation
+ * Evaluate complex number equation safely
  */
 export function evaluateComplexEquation(
   z: { re: number; im: number },
@@ -145,26 +145,125 @@ export function evaluateComplexEquation(
   equation: string
 ): { re: number; im: number } | null {
   try {
-    // Replace variables with actual values
-    let expr = equation
-      .replace(/z/g, `({re: ${z.re}, im: ${z.im}})`)
-      .replace(/c/g, `({re: ${c.re}, im: ${c.im}})`);
+    type Complex = { re: number; im: number };
+    type Num = number | Complex;
 
-    // Handle complex operations
-    expr = expr.replace(/\*\*/g, '**');
+    // Build a safe evaluation context with complex operations
+    const context = {
+      z,
+      c,
+      // Complex arithmetic helpers
+      add: (a: Num, b: Num): Complex => {
+        if (typeof a === 'number') a = { re: a, im: 0 };
+        if (typeof b === 'number') b = { re: b, im: 0 };
+        return { re: a.re + b.re, im: a.im + b.im };
+      },
+      sub: (a: Num, b: Num): Complex => {
+        if (typeof a === 'number') a = { re: a, im: 0 };
+        if (typeof b === 'number') b = { re: b, im: 0 };
+        return { re: a.re - b.re, im: a.im - b.im };
+      },
+      mul: (a: Num, b: Num): Complex => {
+        if (typeof a === 'number') a = { re: a, im: 0 };
+        if (typeof b === 'number') b = { re: b, im: 0 };
+        return {
+          re: a.re * b.re - a.im * b.im,
+          im: a.re * b.im + a.im * b.re
+        };
+      },
+      div: (a: Num, b: Num): Complex => {
+        if (typeof a === 'number') a = { re: a, im: 0 };
+        if (typeof b === 'number') b = { re: b, im: 0 };
+        const denom = b.re * b.re + b.im * b.im;
+        return {
+          re: (a.re * b.re + a.im * b.im) / denom,
+          im: (a.im * b.re - a.re * b.im) / denom
+        };
+      },
+      pow: (base: Num, exp: number): Complex => {
+        if (typeof base === 'number') base = { re: base, im: 0 };
+        let result = { re: 1, im: 0 };
+        for (let i = 0; i < exp; i++) {
+          result = context.mul(result, base);
+        }
+        return result;
+      },
+      abs: (val: Num): number => {
+        if (typeof val === 'number') return Math.abs(val);
+        return Math.sqrt(val.re * val.re + val.im * val.im);
+      },
+      conj: (val: Num): Complex => {
+        if (typeof val === 'number') return { re: val, im: 0 };
+        return { re: val.re, im: -val.im };
+      },
+      sin: (val: Num): Complex => {
+        if (typeof val === 'number') return { re: Math.sin(val), im: 0 };
+        const exp_im = Math.exp(-val.im);
+        const exp_neg_im = Math.exp(val.im);
+        return {
+          re: (exp_im - exp_neg_im) * Math.sin(val.re) / 2,
+          im: (exp_im + exp_neg_im) * Math.cos(val.re) / 2
+        };
+      },
+      cos: (val: Num): Complex => {
+        if (typeof val === 'number') return { re: Math.cos(val), im: 0 };
+        const exp_im = Math.exp(-val.im);
+        const exp_neg_im = Math.exp(val.im);
+        return {
+          re: (exp_im + exp_neg_im) * Math.cos(val.re) / 2,
+          im: (exp_neg_im - exp_im) * Math.sin(val.re) / 2
+        };
+      },
+      exp: (val: Num): Complex => {
+        if (typeof val === 'number') return { re: Math.exp(val), im: 0 };
+        const exp_re = Math.exp(val.re);
+        return {
+          re: exp_re * Math.cos(val.im),
+          im: exp_re * Math.sin(val.im)
+        };
+      }
+    };
 
-    // Create function and evaluate
-    const fn = new Function('z', 'c', 'return ' + expr);
-    const result = fn(z, c);
+    // Handle common preset equations directly for efficiency
+    if (equation === 'z**2 + c') {
+      return context.add(context.pow(z, 2), c);
+    }
+    if (equation === 'z**3 + c') {
+      return context.add(context.pow(z, 3), c);
+    }
+    if (equation === 'z**4 + c') {
+      return context.add(context.pow(z, 4), c);
+    }
+    // Note: Burning Ship 'abs(z)**2 + c' is now handled in the render loop
+    // by applying abs() to components before iteration, so we use standard evaluation
+    if (equation === 'conj(z)**2 + c') {
+      const conj_z = { re: z.re, im: -z.im };
+      return context.add(context.pow(conj_z, 2), c);
+    }
+
+    // For other equations, try evaluation
+    const fn = new Function(...Object.keys(context), 'return ' + equation);
+    const result = fn(...Object.values(context));
 
     if (typeof result === 'object' && result.re !== undefined && result.im !== undefined) {
       return result;
     }
 
     return null;
-  } catch {
+  } catch (e) {
+    console.error('Evaluation error:', e, 'Equation:', equation);
     return null;
   }
+}
+
+/**
+ * Alias for evaluateComplexEquation for backward compatibility
+ */
+export function evaluateEquation(
+  parsed: ParsedEquation,
+  vars: { z: { re: number; im: number }; c: { re: number; im: number } }
+): { re: number; im: number } | null {
+  return evaluateComplexEquation(vars.z, vars.c, parsed.raw);
 }
 
 /**

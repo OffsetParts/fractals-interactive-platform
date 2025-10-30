@@ -144,7 +144,7 @@ export class PresetManager {
   async getPresetsByType(type: string): Promise<Preset[]> {
     return Array.from(this.presets.values())
       .filter(preset => preset.sceneId.includes(type) || 
-                       (preset.params as any).type === type)
+                       (preset.params as Record<string, unknown>).type === type)
       .filter(preset => preset.public)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }

@@ -2,7 +2,6 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { AnimatedSpiral } from '@/components/hero/animated-spiral';
 
 export default function Home() {
   return (
@@ -27,11 +26,7 @@ export default function Home() {
       </nav>
 
       {/* Hero Section */}
-      <section className="min-h-screen flex items-center justify-center pt-16 bg-gradient-to-br from-white via-blue-50 to-white px-4 relative overflow-hidden">
-        {/* Full-Screen Animated Spiral Overlay - Fades on load */}
-        <div className="fixed inset-0 z-10 opacity-100 animate-fade-out-slow pointer-events-none">
-          <AnimatedSpiral width={typeof window !== 'undefined' ? window.innerWidth : 1200} height={typeof window !== 'undefined' ? window.innerHeight : 800} layers={16} speed={0.008} />
-        </div>
+      <section className="min-h-screen flex items-center justify-center pt-16 bg-gradient-to-br from-white via-blue-50 to-white px-4 relative overflow-hidden z-10">
 
         <div className="max-w-6xl mx-auto text-center space-y-8 relative z-20">
           <div className="space-y-4">

@@ -151,6 +151,7 @@ app.post('/api/broadcast/start', async (req, res) => {
 });
 
 // Error handling middleware
+// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
 app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Unhandled error:', error);
   res.status(500).json({ 
