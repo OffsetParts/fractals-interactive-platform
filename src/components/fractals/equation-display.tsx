@@ -83,7 +83,7 @@ export const EquationDisplay: React.FC<EquationDisplayProps> = ({
 
       {/* Help text */}
       <p className="text-xs text-gray-400">
-        Examples: z**2+c, z**3+c, abs(z)**2+c, conj(z)**2+c
+        Edit equation to create custom fractals. Examples: z**2+c, z**3+c, abs(z)**2+c, conj(z)**2+c
       </p>
     </div>
   );

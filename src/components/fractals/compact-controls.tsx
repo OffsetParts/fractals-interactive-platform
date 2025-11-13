@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 
 interface CompactControlsProps {
-  presets: Record<string, { equation: string; label: string; defaultIterations: number }>;
+  presets: Record<string, { label: string; defaultIterations: number; [key: string]: unknown }>;
   onPresetSelect: (presetKey: string) => void;
   maxIterations: number;
   onIterationsChange: (value: number) => void;
