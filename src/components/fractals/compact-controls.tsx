@@ -7,11 +7,30 @@ interface CompactControlsProps {
   onPresetSelect: (presetKey: string) => void;
   maxIterations: number;
   onIterationsChange: (value: number) => void;
-  colorMode: 'smooth' | 'histogram' | 'binary';
-  onColorModeChange: (mode: 'smooth' | 'histogram' | 'binary') => void;
   onReset: () => void;
   fps: number;
   renderTime: number;
+  palette: string;
+  palettes: string[];
+  onPaletteChange: (name: string) => void;
+  autoIterations?: boolean;
+  onAutoIterationsChange?: (enabled: boolean) => void;
+  autoTone?: boolean;
+  onAutoToneChange?: (enabled: boolean) => void;
+  gamma?: number;
+  onGammaChange?: (v: number) => void;
+  bandStrength?: number;
+  onBandStrengthChange?: (v: number) => void;
+  bandCenter?: number;
+  onBandCenterChange?: (v: number) => void;
+  bandWidth?: number;
+  onBandWidthChange?: (v: number) => void;
+  interiorEnabled?: boolean;
+  onInteriorEnabledChange?: (enabled: boolean) => void;
+  bands?: number;
+  onBandsChange?: (v: number) => void;
+  power?: number;
+  onPowerChange?: (v: number) => void;
 }
 
 export function CompactControls({
@@ -19,11 +38,30 @@ export function CompactControls({
   onPresetSelect,
   maxIterations,
   onIterationsChange,
-  colorMode,
-  onColorModeChange,
   onReset,
   fps,
-  renderTime
+  renderTime,
+  palette,
+  palettes,
+  onPaletteChange,
+  autoIterations = true,
+  onAutoIterationsChange,
+  autoTone = true,
+  onAutoToneChange,
+  gamma = 1.15,
+  onGammaChange,
+  bandStrength = 0.85,
+  onBandStrengthChange,
+  bandCenter = 0.88,
+  onBandCenterChange,
+  bandWidth = 0.035,
+  onBandWidthChange,
+  interiorEnabled = true,
+  onInteriorEnabledChange,
+  bands = 0,
+  onBandsChange,
+  power = 2,
+  onPowerChange
 }: CompactControlsProps) {
   const [isPresetsOpen, setIsPresetsOpen] = useState(false);
 
@@ -80,24 +118,87 @@ export function CompactControls({
         />
       </div>
 
-      {/* Color Mode */}
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">Color Mode</label>
-        <div className="space-y-2">
-          {(['smooth', 'histogram', 'binary'] as const).map((mode) => (
-            <label key={mode} className="flex items-center text-sm text-gray-300">
-              <input
-                type="radio"
-                name="colorMode"
-                value={mode}
-                checked={colorMode === mode}
-                onChange={() => onColorModeChange(mode)}
-                className="mr-2"
-              />
-              {mode.charAt(0).toUpperCase() + mode.slice(1)}
-            </label>
-          ))}
+      {/* Auto Iterations Toggle */}
+      <div className="mt-2">
+        <label className="flex items-center text-sm text-gray-300">
+          <input
+            type="checkbox"
+            className="mr-2"
+            checked={autoIterations}
+            onChange={(e) => onAutoIterationsChange?.(e.target.checked)}
+          />
+          Auto Iterations (FPS adaptive)
+        </label>
+      </div>
+
+      {/* Tone Controls */}
+      <div className="space-y-3">
+        <div>
+          <label className="flex items-center text-sm text-gray-300">
+            <input type="checkbox" className="mr-2" checked={autoTone} onChange={(e) => onAutoToneChange?.(e.target.checked)} />
+            Auto Tone (zoom adaptive)
+          </label>
         </div>
+        {!autoTone && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Gamma: {gamma.toFixed(2)}</label>
+              <input type="range" min="0.6" max="2.2" step="0.01" value={gamma} onChange={(e) => onGammaChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Band Strength: {bandStrength.toFixed(2)}</label>
+              <input type="range" min="0.0" max="1.5" step="0.01" value={bandStrength} onChange={(e) => onBandStrengthChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+            </div>
+          </>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Band Center: {bandCenter.toFixed(2)}</label>
+            <input type="range" min="0.0" max="1.0" step="0.005" value={bandCenter} onChange={(e) => onBandCenterChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Band Width: {bandWidth.toFixed(3)}</label>
+            <input type="range" min="0.005" max="0.2" step="0.001" value={bandWidth} onChange={(e) => onBandWidthChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 items-center">
+          <label className="flex items-center text-sm text-gray-300">
+            <input type="checkbox" className="mr-2" checked={interiorEnabled} onChange={(e) => onInteriorEnabledChange?.(e.target.checked)} />
+            Interior Blue
+          </label>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Bands: {bands}</label>
+            <input type="range" min="0" max="64" step="1" value={bands} onChange={(e) => onBandsChange?.(parseInt(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+          </div>
+        </div>
+      </div>
+
+      {/* Power (n) for z^n when used in equation */}
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2" title="Used when your equation includes z^n, (expr)^n or **n">Power n: {((power ?? 2).toFixed(2))}</label>
+        <input
+          type="range"
+          min="0.1"
+          max="8.0"
+          step="0.01"
+          value={power ?? 2}
+          onChange={(e) => onPowerChange?.(parseFloat(e.target.value))}
+          className="w-full h-2 bg-gray-700 rounded"
+        />
+      </div>
+
+      {/* Palette Selector */}
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">Palette</label>
+        <select
+          value={palette}
+          onChange={(e) => onPaletteChange(e.target.value)}
+          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm hover:border-gray-600 transition"
+        >
+          {palettes.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
       </div>
 
       {/* Reset Button */}

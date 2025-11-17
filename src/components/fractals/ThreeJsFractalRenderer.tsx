@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { materials, MaterialKey, createCustomMaterial } from '@/lib/webgl/shader-materials';
+import { getPaletteTexture, PaletteName, DEFAULT_PALETTE } from '@/lib/utils/palettes';
 
 export interface ThreeJsFractalRendererProps {
   width: number;
@@ -12,6 +13,18 @@ export interface ThreeJsFractalRendererProps {
   initialViewport?: { x: number; y: number; zoom: number };
   onZoom?: (zoomLevel: number) => void;
   onPan?: (offsetX: number, offsetY: number) => void;
+  iterations?: number;
+  paletteName?: PaletteName;
+  autoAdjustIterations?: boolean;
+  autoAdjustSmoothing?: number; // 0..1 per frame smoothing toward target
+  autoTone?: boolean;
+  gamma?: number;
+  bandStrength?: number;
+  bandCenter?: number;
+  bandWidth?: number;
+  interiorEnabled?: boolean;
+  bands?: number;
+  power?: number; // exponent parameter for z^n when equation uses 'n'
 }
 
 interface ViewState {
@@ -28,11 +41,24 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
   initialViewport,
   onZoom,
   onPan,
+  iterations = 150,
+  paletteName = DEFAULT_PALETTE,
+  autoAdjustIterations = true,
+  autoAdjustSmoothing = 0.15,
+  autoTone = true,
+  gamma = 1.15,
+  bandStrength = 0.85,
+  bandCenter = 0.88,
+  bandWidth = 0.035,
+  interiorEnabled = true,
+  bands = 0,
+  power = 2.0,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const materialRef = useRef<THREE.RawShaderMaterial | null>(null);
   const meshRef = useRef<THREE.Mesh | null>(null);
 
@@ -56,6 +82,34 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
   const startTimeRef = useRef<number>(Date.now());
   const frameCountRef = useRef<number>(0);
   const fpsRef = useRef<number>(60);
+  const targetFpsRef = useRef<number>(60);
+  const targetItersRef = useRef<number>(iterations);
+  const currentItersRef = useRef<number>(iterations);
+  const autoEnabledRef = useRef<boolean>(autoAdjustIterations);
+  const maxItersCapRef = useRef<number>(512);
+  const autoToneRef = useRef<boolean>(autoTone);
+  const toneParamsRef = useRef({ gamma, bandStrength, bandCenter, bandWidth, interiorEnabled, bands });
+
+  const extractMaxItersCap = useCallback((shader: string | undefined): number => {
+    if (!shader) return 512;
+    const m = shader.match(/#define\s+MAX_ITERS\s+(\d+)/);
+    return m ? Math.max(1, parseInt(m[1], 10)) : 512;
+  }, []);
+
+  const maybeRecompileWithCap = useCallback((desiredCap: number) => {
+    if (!materialRef.current) return;
+    const currentCap = maxItersCapRef.current;
+    if (desiredCap <= currentCap) return;
+    const newCap = Math.min(2048, desiredCap);
+    const fs = (materialRef.current as any).fragmentShader as string | undefined;
+    if (!fs) return;
+    const replaced = fs.replace(/#define\s+MAX_ITERS\s+\d+/, `#define MAX_ITERS ${newCap}`);
+    if (replaced !== fs) {
+      (materialRef.current as any).fragmentShader = replaced;
+      materialRef.current.needsUpdate = true;
+      maxItersCapRef.current = newCap;
+    }
+  }, []);
 
   // Initialize THREE.js scene
   useEffect(() => {
@@ -63,13 +117,14 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
 
     // Scene setup
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87ceeb); // skyblue
+    scene.background = new THREE.Color(0x000000);
     sceneRef.current = scene;
 
     // Camera - orthographic for full-screen coverage
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
     camera.position.set(0, 0, 1);
     camera.lookAt(0, 0, 0);
+    cameraRef.current = camera;
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({
@@ -107,6 +162,16 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
       new THREE.Vector2(viewStateRef.current.offset.x, viewStateRef.current.offset.y)
     );
     material.uniforms.scale.value = viewStateRef.current.scale;
+    // Palette + iterations
+    material.uniforms.palette.value = getPaletteTexture(paletteName);
+    material.uniforms.uIters.value = iterations;
+    if (material.uniforms.uPower) material.uniforms.uPower.value = power;
+    if (material.uniforms.uGamma) material.uniforms.uGamma.value = toneParamsRef.current.gamma;
+    if (material.uniforms.uBandStrength) material.uniforms.uBandStrength.value = toneParamsRef.current.bandStrength;
+    if (material.uniforms.uBandCenter) material.uniforms.uBandCenter.value = toneParamsRef.current.bandCenter;
+    if (material.uniforms.uBandWidth) material.uniforms.uBandWidth.value = toneParamsRef.current.bandWidth;
+    if (material.uniforms.uInteriorEnabled) material.uniforms.uInteriorEnabled.value = toneParamsRef.current.interiorEnabled ? 1 : 0;
+    if (material.uniforms.uBands) material.uniforms.uBands.value = toneParamsRef.current.bands|0;
 
     // Mesh
     const mesh = new THREE.Mesh(geometry, material);
@@ -173,6 +238,20 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
     newMaterial.uniforms.offset.value.copy(oldMaterial!.uniforms.offset.value);
     newMaterial.uniforms.scale.value = oldMaterial!.uniforms.scale.value;
     newMaterial.uniforms.time.value = oldMaterial!.uniforms.time.value;
+    // Palette + iterations
+    newMaterial.uniforms.palette.value = getPaletteTexture(paletteName);
+    (newMaterial.uniforms.palette.value as THREE.DataTexture).needsUpdate = true;
+    newMaterial.uniforms.uIters.value = iterations;
+    targetItersRef.current = iterations;
+    currentItersRef.current = iterations;
+    maxItersCapRef.current = extractMaxItersCap((newMaterial as any).fragmentShader as string | undefined);
+    if (newMaterial.uniforms.uPower) newMaterial.uniforms.uPower.value = power;
+    if (newMaterial.uniforms.uGamma) newMaterial.uniforms.uGamma.value = toneParamsRef.current.gamma;
+    if (newMaterial.uniforms.uBandStrength) newMaterial.uniforms.uBandStrength.value = toneParamsRef.current.bandStrength;
+    if (newMaterial.uniforms.uBandCenter) newMaterial.uniforms.uBandCenter.value = toneParamsRef.current.bandCenter;
+    if (newMaterial.uniforms.uBandWidth) newMaterial.uniforms.uBandWidth.value = toneParamsRef.current.bandWidth;
+    if (newMaterial.uniforms.uInteriorEnabled) newMaterial.uniforms.uInteriorEnabled.value = toneParamsRef.current.interiorEnabled ? 1 : 0;
+    if (newMaterial.uniforms.uBands) newMaterial.uniforms.uBands.value = toneParamsRef.current.bands|0;
 
     meshRef.current.material = newMaterial;
     materialRef.current = newMaterial;
@@ -180,7 +259,45 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
     if (oldMaterial) {
       oldMaterial.dispose();
     }
-  }, [materialKey, customEquation]);
+  }, [materialKey, customEquation, paletteName, iterations]);
+
+  // React to palette or iterations changes without recreating material
+  useEffect(() => {
+    if (!materialRef.current) return;
+    materialRef.current.uniforms.palette.value = getPaletteTexture(paletteName);
+    (materialRef.current.uniforms.palette.value as THREE.DataTexture).needsUpdate = true;
+  }, [paletteName]);
+
+  // Update uPower when prop changes
+  useEffect(() => {
+    if (!materialRef.current) return;
+    if (materialRef.current.uniforms.uPower) {
+      materialRef.current.uniforms.uPower.value = power;
+    }
+  }, [power]);
+
+  useEffect(() => {
+    if (!materialRef.current) return;
+    targetItersRef.current = iterations;
+  }, [iterations]);
+
+  useEffect(() => {
+    autoEnabledRef.current = autoAdjustIterations;
+  }, [autoAdjustIterations]);
+
+  useEffect(() => { autoToneRef.current = autoTone; }, [autoTone]);
+  useEffect(() => {
+    toneParamsRef.current = { gamma, bandStrength, bandCenter, bandWidth, interiorEnabled, bands };
+    if (!materialRef.current) return;
+    if (!autoToneRef.current) {
+      if (materialRef.current.uniforms.uGamma) materialRef.current.uniforms.uGamma.value = gamma;
+      if (materialRef.current.uniforms.uBandStrength) materialRef.current.uniforms.uBandStrength.value = bandStrength;
+    }
+    if (materialRef.current.uniforms.uBandCenter) materialRef.current.uniforms.uBandCenter.value = bandCenter;
+    if (materialRef.current.uniforms.uBandWidth) materialRef.current.uniforms.uBandWidth.value = bandWidth;
+    if (materialRef.current.uniforms.uInteriorEnabled) materialRef.current.uniforms.uInteriorEnabled.value = interiorEnabled ? 1 : 0;
+    if (materialRef.current.uniforms.uBands) materialRef.current.uniforms.uBands.value = bands|0;
+  }, [gamma, bandStrength, bandCenter, bandWidth, interiorEnabled, bands, autoTone]);
 
   // Animation loop
   useEffect(() => {
@@ -193,14 +310,56 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
       const currentTime = (Date.now() - startTimeRef.current) / 1000;
       materialRef.current.uniforms.time.value = currentTime;
 
-      // Render
-      rendererRef.current.render(sceneRef.current, new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000));
+      // Adaptive cinematic tone based on zoom depth (compromise for overview vs deep zoom)
+      if (autoToneRef.current) {
+        const s = Math.max(1e-9, viewStateRef.current.scale);
+        const depth = Math.max(0, Math.min(1, (Math.log2(1 / s) + 2.0) / 12.0));
+        const effectiveGamma = 0.9 + (1.6 - 0.9) * depth;
+        const effectiveBandStrength = 0.2 + (0.9 - 0.2) * depth;
+        if (materialRef.current.uniforms.uGamma) materialRef.current.uniforms.uGamma.value = effectiveGamma;
+        if (materialRef.current.uniforms.uBandStrength) materialRef.current.uniforms.uBandStrength.value = effectiveBandStrength;
+      }
+
+      // Render with persistent camera
+      if (cameraRef.current) {
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
+      }
 
       // FPS calculation
       frameCountRef.current++;
       if (frameCountRef.current % 30 === 0) {
         const elapsed = (Date.now() - startTimeRef.current) / 1000;
         fpsRef.current = frameCountRef.current / elapsed;
+        // Update target iterations based on FPS bands
+        if (autoEnabledRef.current) {
+          const currentTarget = targetItersRef.current;
+          let nextTarget = currentTarget;
+          if (fpsRef.current > targetFpsRef.current + 5 && currentTarget < 2000) {
+            nextTarget = Math.min(2000, currentTarget + 20);
+          } else if (fpsRef.current < targetFpsRef.current - 5 && currentTarget > 30) {
+            nextTarget = Math.max(30, currentTarget - 20);
+          }
+          targetItersRef.current = nextTarget;
+          // Request a higher compile-time cap if needed
+          if (nextTarget > maxItersCapRef.current) {
+            maybeRecompileWithCap(nextTarget);
+          }
+        }
+      }
+
+      // Smoothly tween current iterations toward target
+      if (materialRef.current) {
+        const t = Math.max(0, Math.min(1, autoAdjustSmoothing));
+        const current = currentItersRef.current;
+        const target = autoEnabledRef.current ? targetItersRef.current : targetItersRef.current; // still follow manual updates
+        const next = current + (target - current) * t;
+        currentItersRef.current = next;
+        const rounded = Math.max(1, Math.round(next));
+        materialRef.current.uniforms.uIters.value = rounded;
+        // Safety: if manual target exceeds cap, trigger recompile
+        if (rounded > maxItersCapRef.current) {
+          maybeRecompileWithCap(rounded);
+        }
       }
     };
 

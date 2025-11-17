@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { ThreeJsFractalRenderer } from '@/components/fractals/ThreeJsFractalRenderer';
 import { CompactControls } from '@/components/fractals/compact-controls';
 import { MaterialKey } from '@/lib/webgl/shader-materials';
+import { ALL_PALETTES, DEFAULT_PALETTE, PaletteName } from '@/lib/utils/palettes';
 
 // Dynamically import EquationDisplay with no SSR (requires MathJax)
 const EquationDisplay = dynamic(
@@ -22,15 +23,6 @@ interface FractalViewport {
 // Preset equations that auto-fill the equation bar
 const PRESET_EQUATIONS: Record<string, { label: string; defaultIterations: number; materialKey: MaterialKey; equation: string; viewport?: FractalViewport }> = {
   mandelbrot: { label: 'Mandelbrot', defaultIterations: 256, materialKey: 'normal', equation: 'z^2 + c' },
-  seahorse: { 
-    label: 'Seahorse Valley', 
-    defaultIterations: 256, 
-    materialKey: 'normal', 
-    equation: 'z^2 + c',
-    viewport: { x: -0.745, y: 0.105, zoom: 0.015 }
-  },
-  mandelbrot_hp: { label: 'Mandelbrot (High Precision)', defaultIterations: 256, materialKey: 'hp', equation: 'z^2 + c' },
-  mandelbrot_distance: { label: 'Mandelbrot (Distance)', defaultIterations: 256, materialKey: 'distance', equation: 'z^2 + c' },
   burningship: { label: 'Burning Ship', defaultIterations: 256, materialKey: 'burningShip', equation: '|z|^2 + c' },
   burningship_z3: { label: 'Burning Ship z³', defaultIterations: 256, materialKey: 'burningShipZ3', equation: '|z|^3 + c' },
   burningship_semi: { label: 'Semi Burning Ship', defaultIterations: 256, materialKey: 'semi', equation: '(\\text{Re}(z) + |\\text{Im}(z)|i)^2 + c' },
@@ -44,18 +36,45 @@ const PRESET_EQUATIONS: Record<string, { label: string; defaultIterations: numbe
     equation: '\\text{IFS}(z)',
     viewport: { x: 0, y: 0.2, zoom: 1.8 }
   },
+  mono: { label: 'Mandelbrot (Grayscale)', defaultIterations: 256, materialKey: 'mono', equation: 'z^2 + c' },
+  rgbTest: { label: 'RGB Test (No Palette)', defaultIterations: 1, materialKey: 'rgbTest', equation: 'test' },
+  paletteRamp: { label: 'Palette Ramp', defaultIterations: 1, materialKey: 'paletteRamp', equation: 'ramp' },
+  heatmap: {
+    label: 'Heatmap Debug',
+    defaultIterations: 128,
+    materialKey: 'heatmap',
+    equation: 'heatmap',
+    viewport: { x: 0, y: 0, zoom: 1 }
+  },
+  debug: {
+    label: 'Debug Gradient',
+    defaultIterations: 50,
+    materialKey: 'debug',
+    equation: 'debug',
+    viewport: { x: 0, y: 0, zoom: 1 }
+  }
 };
 
 export default function FractalExplorer() {
   // Material/renderer state
-  const [currentMaterial, setCurrentMaterial] = useState<MaterialKey>('normal');
-  const [currentEquation, setCurrentEquation] = useState<string>('z^2 + c');
-  const [currentPresetKey, setCurrentPresetKey] = useState<string>('mandelbrot');
+  const [currentMaterial, setCurrentMaterial] = useState<MaterialKey>('debug');
+  const [currentEquation, setCurrentEquation] = useState<string>(PRESET_EQUATIONS.debug.equation);
+  const [currentPresetKey, setCurrentPresetKey] = useState<string>('debug');
   const [isCustomEquation, setIsCustomEquation] = useState<boolean>(false);
   const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
 
   // Core state
-  const [maxIterations, setMaxIterations] = useState<number>(150);
+  const [maxIterations, setMaxIterations] = useState<number>(PRESET_EQUATIONS.debug.defaultIterations);
+  const [palette, setPalette] = useState<PaletteName>(DEFAULT_PALETTE);
+  const [autoIters, setAutoIters] = useState<boolean>(true);
+  const [autoTone, setAutoTone] = useState<boolean>(true);
+  const [gamma, setGamma] = useState<number>(1.15);
+  const [bandStrength, setBandStrength] = useState<number>(0.85);
+  const [bandCenter, setBandCenter] = useState<number>(0.88);
+  const [bandWidth, setBandWidth] = useState<number>(0.035);
+  const [interiorEnabled, setInteriorEnabled] = useState<boolean>(true);
+  const [bands, setBands] = useState<number>(0);
+  const [power, setPower] = useState<number>(2.0);
 
   // Viewport state
   const [viewport, setViewport] = useState<FractalViewport>({ x: 0, y: 0, zoom: 1 });
@@ -67,6 +86,7 @@ export default function FractalExplorer() {
   const [showEquation, setShowEquation] = useState<boolean>(true);
   const [showControls, setShowControls] = useState<boolean>(true);
   const [showStats, setShowStats] = useState<boolean>(true);
+  const [showEqHelp, setShowEqHelp] = useState<boolean>(false);
   const fpsCounterRef = useRef<{ frameCount: number; lastTime: number }>({ frameCount: 0, lastTime: Date.now() });
 
   // Initialize window size on mount
@@ -184,6 +204,17 @@ export default function FractalExplorer() {
           materialKey={currentMaterial}
           customEquation={isCustomEquation ? currentEquation : undefined}
           initialViewport={viewport}
+          iterations={maxIterations}
+          paletteName={palette}
+          autoAdjustIterations={autoIters}
+          autoTone={autoTone}
+          gamma={gamma}
+          bandStrength={bandStrength}
+          bandCenter={bandCenter}
+          bandWidth={bandWidth}
+          interiorEnabled={interiorEnabled}
+          bands={bands}
+          power={power}
           onZoom={(zoomLevel) => {
             setViewport((prev) => ({ ...prev, zoom: zoomLevel }));
             handleFrameUpdate();
@@ -227,6 +258,32 @@ export default function FractalExplorer() {
               ✕ Hide
             </button>
           </div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs text-gray-500">Type expressions like <code>z^n + c</code>, <code>abs(z)^2 + c</code></div>
+            <button
+              onClick={() => setShowEqHelp((v) => !v)}
+              className="text-gray-400 hover:text-white text-xs border border-gray-700 rounded px-2 py-0.5"
+              title="Show supported functions and examples"
+            >
+              ? Help
+            </button>
+          </div>
+          {showEqHelp && (
+            <div className="text-[11px] text-gray-300 bg-black/40 border border-gray-700/50 rounded p-2 mb-3 space-y-1">
+              <div className="font-semibold text-white/90">Supported</div>
+              <div><span className="text-gray-400">Variables:</span> <code>z</code>, <code>c</code></div>
+              <div><span className="text-gray-400">Ops:</span> <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>^</code>, <code>**</code>, exponent <code>n</code></div>
+              <div><span className="text-gray-400">Powers:</span> <code>z^2</code>, <code>z^3</code>, <code>z^0.5</code>, <code>z^n</code>, <code>(expr)^n</code></div>
+              <div><span className="text-gray-400">Abs/Conj:</span> <code>abs(z)</code>, <code>|z|</code> (componentwise), <code>conj(z)</code></div>
+              <div><span className="text-gray-400">Re/Im:</span> <code>re(expr)</code>, <code>im(expr)</code>, <code>real()</code>, <code>imag()</code></div>
+              <div><span className="text-gray-400">Complex:</span> <code>sin</code>, <code>cos</code>, <code>exp</code>, <code>log</code>, <code>arg</code>, modulus <code>cmod(z)</code></div>
+              <div className="text-gray-400">Examples:</div>
+              <div><code>z^n + c</code></div>
+              <div><code>abs(z)^2 + c</code>, <code>|z|^n + c</code> (Burning Ship)</div>
+              <div><code>conj(z)^2 + c</code> (Tricorn)</div>
+              <div><code>(z + 0.3i)^0.5 + c</code></div>
+            </div>
+          )}
           <EquationDisplay
             equation={currentEquation}
             onEquationChange={handleEquationChange}
@@ -235,12 +292,12 @@ export default function FractalExplorer() {
         </div>
       </div>
 
-      {/* Floating Controls Panel - Right Side */}
+      {/* Floating Controls Panel - Right Side (anchored top-right for accessibility) */}
       <div
-        className="absolute top-1/2 right-0 -translate-y-1/2 z-10 transition-transform duration-300"
-        style={{ transform: showControls ? 'translate(0, -50%)' : 'translate(110%, -50%)' }}
+        className="absolute top-4 right-4 z-10 transition-transform duration-300"
+        style={{ transform: showControls ? 'translate(0,0)' : 'translate(110%,0)' }}
       >
-        <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-l-lg shadow-2xl p-4 w-80 pointer-events-auto max-h-[80vh] overflow-y-auto">
+        <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-4 w-80 pointer-events-auto max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-gray-400 text-xs font-semibold uppercase tracking-wider">
               Fractals
@@ -257,11 +314,30 @@ export default function FractalExplorer() {
             onPresetSelect={handlePresetSelect}
             maxIterations={maxIterations}
             onIterationsChange={setMaxIterations}
-            colorMode="smooth"
-            onColorModeChange={() => {}}
             onReset={handleReset}
             fps={fps}
             renderTime={0}
+            palette={palette}
+            palettes={ALL_PALETTES}
+            onPaletteChange={(name) => setPalette(name as PaletteName)}
+            autoIterations={autoIters}
+            onAutoIterationsChange={(enabled) => setAutoIters(enabled)}
+            autoTone={autoTone}
+            onAutoToneChange={(enabled) => setAutoTone(enabled)}
+            gamma={gamma}
+            onGammaChange={setGamma}
+            bandStrength={bandStrength}
+            onBandStrengthChange={setBandStrength}
+            bandCenter={bandCenter}
+            onBandCenterChange={setBandCenter}
+            bandWidth={bandWidth}
+            onBandWidthChange={setBandWidth}
+            interiorEnabled={interiorEnabled}
+            onInteriorEnabledChange={setInteriorEnabled}
+            bands={bands}
+            onBandsChange={setBands}
+            power={power}
+            onPowerChange={setPower}
           />
         </div>
       </div>

@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { getPaletteTexture, DEFAULT_PALETTE, PaletteName } from '@/lib/utils/palettes';
 
 export interface ShaderUniforms {
   time: { value: number };
@@ -12,6 +13,15 @@ export interface ShaderUniforms {
   scale: { value: number };
   offsetMostSignificant: { value: THREE.Vector2 };
   offsetLeastSignificant: { value: THREE.Vector2 };
+    palette: { value: THREE.DataTexture };
+    uIters: { value: number };
+        uGamma: { value: number };
+        uBandCenter: { value: number };
+        uBandWidth: { value: number };
+        uBandStrength: { value: number };
+        uInteriorColor: { value: THREE.Vector3 };
+        uInteriorEnabled: { value: number };
+                uBands: { value: number };
   [uniform: string]: { value: unknown };
 }
 
@@ -21,7 +31,17 @@ const createDefaultUniforms = (): ShaderUniforms => ({
   offset: { value: new THREE.Vector2(0, 0) },
   scale: { value: 1.0 },
   offsetMostSignificant: { value: new THREE.Vector2(0, 0) },
-  offsetLeastSignificant: { value: new THREE.Vector2(0, 0) }
+    offsetLeastSignificant: { value: new THREE.Vector2(0, 0) },
+    palette: { value: getPaletteTexture(DEFAULT_PALETTE) },
+        uIters: { value: 150 },
+        uGamma: { value: 1.15 },
+        uBandCenter: { value: 0.88 },
+        uBandWidth: { value: 0.035 },
+        uBandStrength: { value: 0.85 },
+        uInteriorColor: { value: new THREE.Vector3(0.04, 0.09, 0.18) },
+        uInteriorEnabled: { value: 1 },
+        uBands: { value: 0 },
+        uPower: { value: 2.0 },
 });
 
 const defaultVertexShader = `
@@ -41,35 +61,213 @@ const fragmentShaderTopShared = `\n\n// A lot of this code is based on code from
 // Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 
 precision highp float;
+precision mediump int;
+precision highp sampler2D;
 varying vec2 coord; // The pixel coordinates from (-1, -1) to (1, 1)
 uniform vec2 resolution; // The resolution of the draw area
 uniform vec2 offset; // The panning offset
-uniform float scale; // The zoom factor\n\n`;
+uniform float scale; // The zoom factor
+uniform sampler2D palette; // 1D gradient palette
+uniform int uIters; // dynamic iteration budget
+// Cinematic coloring controls
+uniform float uGamma; // tone curve
+uniform float uBandCenter; // where the white band is centered in t
+uniform float uBandWidth; // width of the white band
+uniform float uBandStrength; // mix amount for white band
+uniform vec3 uInteriorColor; // color for interior points
+uniform int uInteriorEnabled; // 1 to color interior, 0 to keep black
+uniform int uBands; // optional quantization bands (0 = off)
+// Equation parameterization
+uniform float uPower; // exponent for z^n when 'n' is used in equation
+
+#define MAX_ITERS 512
+
+vec3 paletteColor(float t) {
+    return texture2D(palette, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
+}
+
+vec3 samplePalette(float t) {
+    float tt = clamp(t, 0.0, 1.0);
+    if (uBands > 0) {
+        float b = float(uBands);
+        tt = floor(tt * b) / b;
+    }
+    tt = pow(tt, max(uGamma, 0.0001));
+    vec3 col = paletteColor(tt);
+    float denom = max(uBandWidth, 0.0001);
+    float band = exp(-0.5 * pow((tt - uBandCenter) / denom, 2.0));
+    col = mix(col, vec3(1.0), clamp(uBandStrength, 0.0, 1.0) * band);
+    return col;
+}
+
+// --- Complex helpers ---
+// Modulus as complex value (r,0)
+vec2 cmod(vec2 z){ return vec2(length(z), 0.0); }
+// Complex exponential
+vec2 cexp(vec2 z){ float e = exp(z.x); return vec2(e * cos(z.y), e * sin(z.y)); }
+// Complex natural log
+vec2 clog(vec2 z){ return vec2(log(length(z)), atan(z.y, z.x)); }
+// Scalar hyperbolic helpers (no built-in cosh/sinh in WebGL1)
+float coshGL(float x){ float e = exp(x); float inv = exp(-x); return 0.5*(e+inv); }
+float sinhGL(float x){ float e = exp(x); float inv = exp(-x); return 0.5*(e-inv); }
+// Complex sine
+vec2 csin(vec2 z){ return vec2(sin(z.x)*coshGL(z.y), cos(z.x)*sinhGL(z.y)); }
+// Complex cosine
+vec2 ccos(vec2 z){ return vec2(cos(z.x)*coshGL(z.y), -sin(z.x)*sinhGL(z.y)); }
+// Complex argument (angle) as (theta,0)
+vec2 carg(vec2 z){ return vec2(atan(z.y, z.x), 0.0); }
+// Componentwise absolute (Burning Ship style)
+vec2 cabs(vec2 z){ return vec2(abs(z.x), abs(z.y)); }
+
+`;
 
 const fragmentShaderTopAnimateOn = fragmentShaderTopShared + `#define ANIMATE 1 // Set to 1 to render the fractal every frame. Set to 0 to only render upon interaction.
 uniform float time; // Time since program start, in seconds\n\n`;
 
-// Parse equation string to GLSL code
+// Sanitize and parse equation string to GLSL code, ensuring a 'c' term exists
+function sanitizeEquation(equation: string): string {
+    let eq = equation.trim();
+    // Normalize uppercase C constant to lowercase c if standalone
+    eq = eq.replace(/(^|[^A-Za-z0-9_])C(?![A-Za-z0-9_])/g, '$1c');
+    // Trailing '+' => append 'c'
+    if (/\+$/.test(eq)) eq += ' c';
+    // Ensure at least one 'c' token (not part of identifier)
+    if (!/(^|[^A-Za-z0-9_])c(?![A-Za-z0-9_])/i.test(eq)) eq += ' + c';
+    return eq;
+}
+
 function parseEquationToGLSL(equation: string): string {
-  let glsl = equation
-    // Replace ** with proper power handling
-    .replace(/z\*\*(\d+)/g, (_, exp) => {
-      const n = parseInt(exp);
-      if (n === 2) return '(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)';
-      if (n === 3) return 'cmul(cmul(z, z), z)';
-      return `cpow(z, ${exp}.0)`;
-    })
-    // Handle abs(z)
-    .replace(/abs\(z\)/g, 'vec2(abs(z.x), abs(z.y))')
-    // Handle conj(z) - complex conjugate
-    .replace(/conj\(z\)/g, 'vec2(z.x, -z.y)')
-    // Replace z^2 with proper complex multiplication
-    .replace(/z\^2/g, 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)')
-    .replace(/z\^3/g, 'cmul(cmul(z, z), z)')
-    // Replace + c with proper complex addition
-    .replace(/\+\s*c/g, '+ c');
-  
-  return glsl;
+    const src = sanitizeEquation(equation);
+    // Normalize fragmented decimal exponents produced by upstream tokenization
+    let normalized = src
+        // z^(0.5) -> z^0.5
+        .replace(/z\^\(\s*([0-9]*\.?[0-9]+)\s*\)/g, 'z^$1')
+        // z^0 *.5 or z^2 *.25 -> z^0.5 / z^2.25
+        .replace(/z\^(\d+)\s*\*\s*\.?([0-9]+)/g, (_m, a: string, b: string) => `z^${a}.${b}`)
+        .replace(/z\^(0)\s*\*\s*\.([0-9]+)/g, (_m, a: string, b: string) => `z^${a}.${b}`)
+        // Parenthesized form z^( *0.5) -> z^0.5 (possible artifact)
+        .replace(/z\^\(\s*\*\s*([0-9]*\.?[0-9]+)\s*\)/g, 'z^$1')
+        // |z|^n and abs(z)^n -> cpow(componentwise_abs, uPower)
+        .replace(/\|\s*z\s*\|\s*\^\s*n\b/gi, 'cpow(vec2(abs(z.x),abs(z.y)), uPower)')
+        .replace(/abs\(\s*z\s*\)\s*\^\s*n\b/gi, 'cpow(vec2(abs(z.x),abs(z.y)), uPower)')
+        // |z|^p and abs(z)^p -> cpow(componentwise_abs, p)
+        .replace(/\|\s*z\s*\|\s*\^\s*((?:\d*\.\d+|\d+))/gi, (_m, p: string) => `cpow(vec2(abs(z.x),abs(z.y)), ${p}.0)`) 
+        .replace(/abs\(\s*z\s*\)\s*\^\s*((?:\d*\.\d+|\d+))/gi, (_m, p: string) => `cpow(vec2(abs(z.x),abs(z.y)), ${p}.0)`) 
+        // |z| -> cabs(z) (user expectation: componentwise burning ship style)
+        .replace(/\|z\|/g, 'cabs(z)')
+        // abs(z) powers special-case BEFORE generic abs(z) replacement
+        .replace(/abs\(z\)\^2/g,'ABSZ_SQ')
+        .replace(/abs\(z\)\^3/g,'ABSZ_CU')
+        .replace(/cabs\(z\)\^2/g,'CABSZ_SQ')
+        .replace(/cabs\(z\)\^3/g,'CABSZ_CU')
+        .replace(/conj\(z\)\^2/g,'CONJZ_SQ')
+        .replace(/conj\(z\)\^3/g,'CONJZ_CU');
+
+    let glsl = normalized
+        .replace(/z\*\*((?:\d*\.\d+|\d+))/g, (_: string, exp: string) => {
+            const n = parseInt(exp);
+            if (n === 2) return 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)';
+            if (n === 3) return 'cmul(cmul(z, z), z)';
+            return `cpow(z, ${exp}.0)`;
+        })
+        // Variable exponent: z**n or z^n -> cpow(z, uPower)
+        .replace(/z\*\*n\b/gi, 'cpow(z, uPower)')
+        .replace(/z\^n\b/gi, 'cpow(z, uPower)')
+        // Fallback: bare 'z**' with neither digit nor n -> square
+        .replace(/z\*\*(?![\dn])/g, 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)')
+        // Expand tagged special forms
+        .replace(/ABSZ_SQ/g,'vec2(abs(z.x)*abs(z.x) - abs(z.y)*abs(z.y), 2.0*abs(z.x)*abs(z.y))')
+        .replace(/ABSZ_CU/g,'cmul(cmul(vec2(abs(z.x),abs(z.y)), vec2(abs(z.x),abs(z.y))), vec2(abs(z.x),abs(z.y)))')
+        .replace(/CABSZ_SQ/g,'vec2(abs(z.x)*abs(z.x) - abs(z.y)*abs(z.y), 2.0*abs(z.x)*abs(z.y))')
+        .replace(/CABSZ_CU/g,'cmul(cmul(vec2(abs(z.x),abs(z.y)), vec2(abs(z.x),abs(z.y))), vec2(abs(z.x),abs(z.y)))')
+        .replace(/CONJZ_SQ/g,'vec2(z.x*z.x - z.y*z.y, -2.0*z.x*z.y)')
+        .replace(/CONJZ_CU/g,'cmul(cmul(vec2(z.x,-z.y), vec2(z.x,-z.y)), vec2(z.x,-z.y))')
+        // Basic componentwise abs / conjugate fallback
+        .replace(/abs\(z\)/g, 'vec2(abs(z.x), abs(z.y))')
+        .replace(/cabs\(z\)/g, 'vec2(abs(z.x), abs(z.y))')
+        .replace(/conj\(z\)/g, 'vec2(z.x, -z.y)')
+        .replace(/z\^2/g, 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)')
+        .replace(/z\^3/g, 'cmul(cmul(z, z), z)')
+        .replace(/z\^((?:\d*\.\d+|\d+))/g, (_m, exp: string) => `cpow(z, ${exp}.0)`) // generic caret power, floats too
+        .replace(/\+\s*c/g, '+ c');
+    // re(expr) and im(expr)
+    glsl = glsl.replace(/\bre\(([^()]+)\)/gi, (_m, e: string) => `((${e})).x`);
+    glsl = glsl.replace(/\bim\(([^()]+)\)/gi, (_m, e: string) => `((${e})).y`);
+    // real()/imag() synonyms
+    glsl = glsl.replace(/\breal\(([^()]+)\)/gi, (_m, e: string) => `((${e})).x`);
+    glsl = glsl.replace(/\bimag\(([^()]+)\)/gi, (_m, e: string) => `((${e})).y`);
+    // arg(expr) -> angle as (theta,0)
+    glsl = glsl.replace(/\barg\(([^()]+)\)/gi, (_m, e: string) => `carg(${e})`);
+    // sin/cos/exp/log mapping for complex values
+    glsl = glsl.replace(/\bsin\(([^()]+)\)/gi, (_m, e: string) => `csin(${e})`);
+    glsl = glsl.replace(/\bcos\(([^()]+)\)/gi, (_m, e: string) => `ccos(${e})`);
+    glsl = glsl.replace(/\bexp\(([^()]+)\)/gi, (_m, e: string) => `cexp(${e})`);
+    glsl = glsl.replace(/\blog\(([^()]+)\)/gi, (_m, e: string) => `clog(${e})`);
+
+
+    // Complex literal a+bi or a-bi -> vec2(a, b)
+    glsl = glsl.replace(/([+-]?\d+(?:\.\d+)?)\s*([+-])\s*(\d+(?:\.\d+)?)i\b/g, (_m, a: string, s: string, b: string) => {
+        const ra = a.includes('.') ? a : `${a}.0`;
+        const rb = b.includes('.') ? b : `${b}.0`;
+        const ib = s === '-' ? `-${rb}` : rb;
+        return `vec2(${ra}, ${ib})`;
+    });
+    // Pure imaginary bi -> vec2(0, b)
+    glsl = glsl.replace(/([+-]?\d+(?:\.\d+)?)i\b/g, (_m, b: string) => {
+        const rb = b.includes('.') ? b : `${b}.0`;
+        return `vec2(0.0, ${rb})`;
+    });
+    // Pure real number additions/subtractions already coerced below, but also handle standalone numbers -> vec2(n,0) when adjacent to vector math
+    glsl = glsl.replace(/\b([+-]?\d+(?:\.\d+)?)\b(?=\s*\+\s*c)/g, (_m, n: string) => {
+        const rn = n.includes('.') ? n : `${n}.0`;
+        return `vec2(${rn}, 0.0)`;
+    });
+
+    // Scalar multiply/divide: z * k -> cmul(z, vec2(k,0)), k * z -> cmul(vec2(k,0), z), z / k -> cmul(z, vec2(1.0/k,0))
+    glsl = glsl.replace(/\bz\s*\*\s*([+-]?\d+(?:\.\d+)?)/g, (_m, k: string) => {
+        const rk = k.includes('.') ? k : `${k}.0`;
+        return `cmul(z, vec2(${rk}, 0.0))`;
+    });
+    glsl = glsl.replace(/([+-]?\d+(?:\.\d+)?)\s*\*\s*\bz\b/g, (_m, k: string) => {
+        const rk = k.includes('.') ? k : `${k}.0`;
+        return `cmul(vec2(${rk}, 0.0), z)`;
+    });
+    glsl = glsl.replace(/\bz\s*\/\s*([+-]?\d+(?:\.\d+)?)/g, (_m, k: string) => {
+        const rk = k.includes('.') ? k : `${k}.0`;
+        return `cmul(z, vec2(${`(1.0/${rk})`}, 0.0))`;
+    });
+
+    // Power on general vec2/parenthesized expressions with floats: **N or ^N
+    glsl = glsl.replace(/(vec2\([^()]*\))\s*\*\*\s*((?:\d*\.\d+|\d+))/g, (_m, expr: string, exp: string) => `cpow(${expr}, ${exp}.0)`);
+    glsl = glsl.replace(/(vec2\([^()]*\))\s*\^\s*((?:\d*\.\d+|\d+))/g, (_m, expr: string, exp: string) => `cpow(${expr}, ${exp}.0)`);
+    glsl = glsl.replace(/\(([^()]+)\)\s*\*\*\s*((?:\d*\.\d+|\d+))/g, (_m, expr: string, exp: string) => `cpow((${expr}), ${exp}.0)`);
+    glsl = glsl.replace(/\(([^()]+)\)\s*\^\s*((?:\d*\.\d+|\d+))/g, (_m, expr: string, exp: string) => `cpow((${expr}), ${exp}.0)`);
+    // Function call base: f(args)^N or **N
+    // Function call base: capture entire call before exponent (avoid dropping args)
+    glsl = glsl.replace(/((?:[A-Za-z_][A-Za-z0-9_]*)\([^()]*\))\s*\^\s*((?:\d*\.\d+|\d+))/g, (_m, call: string, exp: string) => `cpow(${call}, ${exp}.0)`);
+    glsl = glsl.replace(/((?:[A-Za-z_][A-Za-z0-9_]*)\([^()]*\))\s*\*\*\s*((?:\d*\.\d+|\d+))/g, (_m, call: string, exp: string) => `cpow(${call}, ${exp}.0)`);
+    // Variable exponent with function call base
+    glsl = glsl.replace(/((?:[A-Za-z_][A-Za-z0-9_]*)\([^()]*\))\s*\^\s*n\b/gi, (_m, call: string) => `cpow(${call}, uPower)`);
+    glsl = glsl.replace(/((?:[A-Za-z_][A-Za-z0-9_]*)\([^()]*\))\s*\*\*\s*n\b/gi, (_m, call: string) => `cpow(${call}, uPower)`);
+    // Variable exponent on parenthesized or vec2 expressions: **n or ^n
+    glsl = glsl.replace(/(vec2\([^()]*\))\s*\*\*\s*n\b/gi, (_m, expr: string) => `cpow(${expr}, uPower)`);
+    glsl = glsl.replace(/(vec2\([^()]*\))\s*\^\s*n\b/gi, (_m, expr: string) => `cpow(${expr}, uPower)`);
+    glsl = glsl.replace(/\(([^()]+)\)\s*\*\*\s*n\b/gi, (_m, expr: string) => `cpow((${expr}), uPower)`);
+    glsl = glsl.replace(/\(([^()]+)\)\s*\^\s*n\b/gi, (_m, expr: string) => `cpow((${expr}), uPower)`);
+
+    // Coerce standalone numeric additions/subtractions to complex constants
+    // e.g., '+ 0' -> '+ vec2(0.0, 0.0)', '+ 2.5' -> '+ vec2(2.5, 0.0)'
+    glsl = glsl.replace(/([+\-])\s*(\d+(?:\.\d+)?)(?![\d.])/g, (_, sign: string, num: string) => {
+        const f = num.includes('.') ? num : `${num}.0`;
+        return `${sign} vec2(${f}, 0.0)`;
+    });
+
+    // Ensure each iteration expression ends with a '+ c' term; if not, append
+    // (Provided sanitizeEquation already added one global 'c', but user might write z*z without + c)
+    if (!/\+\s*c\s*$/i.test(glsl.trim())) {
+        glsl = glsl.trim() + ' + c';
+    }
+    return glsl;
 }
 
 // Create custom material from equation
@@ -81,11 +279,12 @@ export const createCustomMaterial = (equation: string): THREE.RawShaderMaterial 
     vertexShader: defaultVertexShader,
     fragmentShader: `// Custom fractal: ${equation}${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-#define ITERATIONS 150
 
 vec2 cmul(vec2 a, vec2 b) {
     return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
 }
+
+// Complex divide by real via reciprocal multiply can be done using cmul
 
 vec2 cpow(vec2 z, float exponent) {
     float angle = atan(z.y, z.x);
@@ -99,43 +298,138 @@ void main() {
 
 	const float aa = float(ANTIALIAS_LEVEL);
 	vec2 cellSize = scale / resolution;
+	float insideAccum = 0.0;
 	for (float y = 0.0; y < 1.0; y += 1.0 / aa) {
 		for (float x = 0.0; x < 1.0; x += 1.0 / aa) {
             vec2 c = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y);
 
             int result = 0;
             vec2 z = vec2(0.0, 0.0);
-            for (int i = 1; i <= ITERATIONS; i++) {  
+            for (int i = 1; i <= MAX_ITERS; i++) {  
+                if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
                 z = ${glslIteration};
             }
 
-            // Vibrant Coloring
+            // Smooth gradient coloring via palette
             if (dot(z, z) >= 4.0) {
-                float weight = fract(clamp((float(result) - log2(log2(length(z)))) / float(ITERATIONS), 0.0, 1.0) * 3.0) * 3.0;
-                vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-                vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-                vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-                if (weight < 1.0) gl_FragColor.rgb += mix(color0, color1, fract(weight)); 
-                else if (weight < 2.0) gl_FragColor.rgb += mix(color1, color2, fract(weight));  
-                else gl_FragColor.rgb += mix(color2, color0, fract(weight));
+                float nu = float(result) - log2(log2(length(z)));
+                float t = clamp(nu / max(float(uIters), 1.0), 0.0, 1.0);
+                gl_FragColor.rgb += samplePalette(t);
+            } else {
+                insideAccum += 1.0;
             }
         }
     }
 
-    gl_FragColor.rgb /= aa * aa;
+    float totalSamples = aa * aa;
+    gl_FragColor.rgb /= totalSamples;
+    if (uInteriorEnabled == 1) {
+        float fracInside = insideAccum / totalSamples;
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, uInteriorColor, clamp(fracInside, 0.0, 1.0));
+    }
 }`
   });
 };
 
+// Debug gradient material: visualize domain mapping and palette
+export const createDebugGradientMaterial = (): THREE.RawShaderMaterial => {
+    return new THREE.RawShaderMaterial({
+        uniforms: createDefaultUniforms(),
+        vertexShader: defaultVertexShader,
+        fragmentShader: `// Debug gradient${fragmentShaderTopShared}
+#define ANTIALIAS_LEVEL 1
+
+void main() {
+    vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
+    float r = length(worldCoord);
+    float ang = atan(worldCoord.y, worldCoord.x);
+    float t = clamp(0.5 + 0.5 * sin(3.0 * ang) * exp(-r*0.5), 0.0, 1.0);
+    vec3 base = vec3(0.5 + 0.5 * sin(2.0 * ang), 0.35 + 0.35 * cos(ang + r), 0.25 + 0.25 * sin(r));
+    vec3 pal = samplePalette(t);
+    vec3 col = mix(base, pal, 0.7);
+    // Axis overlay (thickness ~1 pixel in world units)
+    float thickness = scale / resolution.y;
+    if (abs(worldCoord.x) < thickness || abs(worldCoord.y) < thickness) {
+        col = vec3(1.0);
+    }
+    gl_FragColor = vec4(col, 1.0);
+}`
+    });
+};
+
+// Simple RGB test material (no palette) to validate pipeline
+export const createRGBTestMaterial = (): THREE.RawShaderMaterial => {
+    return new THREE.RawShaderMaterial({
+        uniforms: createDefaultUniforms(),
+        vertexShader: defaultVertexShader,
+        fragmentShader: `// RGB test (no palette)
+precision highp float;
+varying vec2 coord;
+uniform vec2 resolution;
+uniform vec2 offset;
+uniform float scale;
+
+void main() {
+    vec2 uv = (coord * 0.5 + 0.5);
+    vec2 world = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
+    float r = 0.5 + 0.5 * sin(6.2831 * uv.x);
+    float g = 0.5 + 0.5 * sin(6.2831 * uv.y + 1.57);
+    float b = 0.5 + 0.5 * sin(6.2831 * (uv.x + uv.y) + 3.14);
+    // Overlay axes in white
+    float thickness = scale / resolution.y;
+    if (abs(world.x) < thickness || abs(world.y) < thickness) {
+        gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+    } else {
+        gl_FragColor = vec4(r, g, b, 1.0);
+    }
+}`
+    });
+};
+
+// Mandelbrot without palette (grayscale) to isolate palette issues
+export const createMandelbrotMonoMaterial = (): THREE.RawShaderMaterial => {
+    return new THREE.RawShaderMaterial({
+        uniforms: createDefaultUniforms(),
+        vertexShader: defaultVertexShader,
+        fragmentShader: `// Mandelbrot grayscale (no palette)${fragmentShaderTopShared}
+#define ANTIALIAS_LEVEL 1
+
+void main() {
+    vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
+    gl_FragColor = vec4(0.0);
+    const float aa = float(ANTIALIAS_LEVEL);
+    vec2 cellSize = scale / resolution;
+    for (int yi = 0; yi < ANTIALIAS_LEVEL; yi++) {
+        for (int xi = 0; xi < ANTIALIAS_LEVEL; xi++) {
+            vec2 jitter = vec2((float(xi) + 0.5) / aa, (float(yi) + 0.5) / aa);
+            vec2 c = vec2(worldCoord.x + jitter.x * cellSize.x, worldCoord.y + jitter.y * cellSize.y);
+            vec2 z = vec2(0.0);
+            int result = 0;
+            for (int i = 1; i <= MAX_ITERS; i++) {
+                if (i > uIters) { result = i; break; }
+                z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
+                if (dot(z,z) > 4.0) { result = i; break; }
+            }
+            if (dot(z,z) >= 4.0) {
+                float nu = float(result) - log2(log2(length(z)));
+                float t = clamp(nu / max(float(uIters), 1.0), 0.0, 1.0);
+                gl_FragColor.rgb += vec3(t);
+            }
+        }
+    }
+    gl_FragColor.rgb /= aa * aa;
+    gl_FragColor.a = 1.0;
+}`
+    });
+};
  // Mandelbrot Set (Standard)
 export const createMandelbrotMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Smooth-colored mandelbrot set${fragmentShaderTopShared}
+        fragmentShader: `// Smooth-colored mandelbrot set${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-#define ITERATIONS 150
 
 vec2 cmul(vec2 a, vec2 b) {
     return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
@@ -158,20 +452,16 @@ void main() {
 
             int result = 0;
             vec2 z = vec2(0.0, 0.0);
-            for (int i = 1; i <= ITERATIONS; i++) {  
+            for (int i = 1; i <= MAX_ITERS; i++) {  
+                if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
                 z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
             }
 
-            // Vibrant Coloring
             if (dot(z, z) >= 4.0) {
-                float weight = fract(clamp((float(result) - log2(log2(length(z)))) / float(ITERATIONS), 0.0, 1.0) * 3.0) * 3.0;
-                vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-                vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-                vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-                if (weight < 1.0) gl_FragColor.rgb += mix(color0, color1, fract(weight)); 
-                else if (weight < 2.0) gl_FragColor.rgb += mix(color1, color2, fract(weight));  
-                else gl_FragColor.rgb += mix(color2, color0, fract(weight));
+                float nu = float(result) - log2(log2(length(z)));
+                float t = clamp(nu / float(uIters), 0.0, 1.0);
+                gl_FragColor.rgb += samplePalette(t);
             }
         }
     }
@@ -179,6 +469,26 @@ void main() {
     gl_FragColor.rgb /= aa * aa;
 }`
   });
+};
+
+// Palette Ramp visualizer (samples palette across X)
+export const createPaletteRampMaterial = (): THREE.RawShaderMaterial => {
+    return new THREE.RawShaderMaterial({
+        uniforms: createDefaultUniforms(),
+        vertexShader: defaultVertexShader,
+        fragmentShader: `// Palette ramp visualizer${fragmentShaderTopShared}
+#define ANTIALIAS_LEVEL 1
+
+void main() {
+    vec2 uv = coord * 0.5 + 0.5;
+    float t = clamp(uv.x, 0.0, 1.0);
+    vec3 col = paletteColor(t);
+    // Tick marks
+    float tick = step(0.495, abs(fract(uv.x * 10.0) - 0.5));
+    col = mix(col, vec3(1.0), smoothstep(0.49, 0.5, tick));
+    gl_FragColor = vec4(col, 1.0);
+}`
+    });
 };
 
 // High Precision Mandelbrot
@@ -360,15 +670,9 @@ vec3 colorDoublePrecision(vec2 p) {
     }
 
     if (j < ITERATIONS) {
-        float weight = fract(clamp((float(j) - log2(log2(length(vec2(dZ.x, dZ.z))))) / float(ITERATIONS), 0.0, 1.0) * 3.0) * 3.0;
-        vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-        vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-        vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-        vec3 finalColor;
-        if (weight < 1.0) finalColor = mix(color0, color1, fract(weight)); 
-        else if (weight < 2.0) finalColor = mix(color1, color2, fract(weight));  
-        else finalColor = mix(color2, color0, fract(weight));
-        return finalColor;
+        float nu = float(j) - log2(log2(length(vec2(dZ.x, dZ.z))));
+        float t = clamp(nu / float(uIters), 0.0, 1.0);
+        return paletteColor(t);
     } else {
         // Inside
         return vec3(0.0);
@@ -396,9 +700,8 @@ export const createBurningShipMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Burning ship fractal${fragmentShaderTopShared}
+        fragmentShader: `// Burning ship fractal${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-#define ITERATIONS 150
 
 vec2 cmul(vec2 a, vec2 b) {
     return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
@@ -422,21 +725,17 @@ void main() {
 
             int result = 0;
             vec2 z = vec2(0.0, 0.0);
-            for (int i = 1; i <= ITERATIONS; i++) {  
+            for (int i = 1; i <= MAX_ITERS; i++) {  
+                if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
                 z = abs(z);
                 z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
             }
 
-            // Coloring
             if (dot(z, z) >= 4.0) {
-                float weight = fract(clamp((float(result) - log2(log2(length(z)))) / float(ITERATIONS), 0.0, 1.0) * 3.0) * 3.0;
-                vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-                vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-                vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-                if (weight < 1.0) gl_FragColor.rgb += mix(color0, color1, fract(weight)); 
-                else if (weight < 2.0) gl_FragColor.rgb += mix(color1, color2, fract(weight));  
-                else gl_FragColor.rgb += mix(color2, color0, fract(weight));
+                float nu = float(result) - log2(log2(length(z)));
+                float t = clamp(nu / float(uIters), 0.0, 1.0);
+                gl_FragColor.rgb += paletteColor(t);
             }
         }
     }
@@ -451,10 +750,9 @@ export const createSemiBurningShipMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Burning ship fractal, but only the imaginary part of
+        fragmentShader: `// Burning ship fractal, but only the imaginary part of
 // the complex number is made absolute${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-#define ITERATIONS 150
 
 vec2 cmul(vec2 a, vec2 b) {
     return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
@@ -478,21 +776,17 @@ void main() {
 
             int result = 0;
             vec2 z = vec2(0.0, 0.0);
-            for (int i = 1; i <= ITERATIONS; i++) {  
+            for (int i = 1; i <= MAX_ITERS; i++) {  
+                if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
                 z.y = abs(z.y);
                 z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
             }
 
-            // Coloring
             if (dot(z, z) >= 4.0) {
-                float weight = fract(clamp((float(result) - log2(log2(length(z)))) / float(ITERATIONS), 0.0, 1.0) * 3.0) * 3.0;
-                vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-                vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-                vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-                if (weight < 1.0) gl_FragColor.rgb += mix(color0, color1, fract(weight)); 
-                else if (weight < 2.0) gl_FragColor.rgb += mix(color1, color2, fract(weight));  
-                else gl_FragColor.rgb += mix(color2, color0, fract(weight));
+                float nu = float(result) - log2(log2(length(z)));
+                float t = clamp(nu / float(uIters), 0.0, 1.0);
+                gl_FragColor.rgb += paletteColor(t);
             }
         }
     }
@@ -507,9 +801,8 @@ export const createBurningShipZ3Material = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// z^3 burning ship fractal${fragmentShaderTopShared}
+        fragmentShader: `// z^3 burning ship fractal${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-#define ITERATIONS 150
 
 vec2 cmul(vec2 a, vec2 b) {
     return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
@@ -533,21 +826,17 @@ void main() {
 
             int result = 0;
             vec2 z = vec2(0.0, 0.0);
-            for (int i = 1; i <= ITERATIONS; i++) {  
+            for (int i = 1; i <= MAX_ITERS; i++) {  
+                if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
                 z = abs(z);
                 z = cmul(cmul(z, z), z) + c;  
             }
 
-            // Smooth coloring
             if (dot(z, z) >= 4.0) {
-                float weight = fract(clamp((float(result) - log(log(length(z))) / log(3.0)) / float(ITERATIONS), 0.0, 1.0) * 3.0) * 3.0;
-                vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-                vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-                vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-                if (weight < 1.0) gl_FragColor.rgb += mix(color0, color1, fract(weight)); 
-                else if (weight < 2.0) gl_FragColor.rgb += mix(color1, color2, fract(weight));  
-                else gl_FragColor.rgb += mix(color2, color0, fract(weight));
+                float nu = float(result) - (log(log(length(z))) / log(3.0));
+                float t = clamp(nu / float(uIters), 0.0, 1.0);
+                gl_FragColor.rgb += paletteColor(t);
             }
         }
     }
@@ -562,9 +851,8 @@ export const createJuliaMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Julia fractal${fragmentShaderTopAnimateOn}
+        fragmentShader: `// Julia fractal${fragmentShaderTopAnimateOn}
 #define ANTIALIAS_LEVEL 1
-#define ITERATIONS 150
 
 vec2 cmul(vec2 a, vec2 b) {
     return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
@@ -587,20 +875,16 @@ void main() {
             
             int result = 0;
             vec2 c = vec2(-0.73 + sin(0.27015 * 2.0 + time * 0.2) * 0.05, 0.27015);
-            for (int i = 1; i <= ITERATIONS; i++) {
+            for (int i = 1; i <= MAX_ITERS; i++) {
+                if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
                 z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
             }
 
-            // Coloring
             if (dot(z, z) >= 4.0) {
-                float weight = fract(clamp((float(result) - log2(log2(length(z)))) / float(ITERATIONS), 0.0, 1.0) * 3.0) * 3.0;
-                vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-                vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-                vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-                if (weight < 1.0) gl_FragColor.rgb += mix(color0, color1, fract(weight)); 
-                else if (weight < 2.0) gl_FragColor.rgb += mix(color1, color2, fract(weight));  
-                else gl_FragColor.rgb += mix(color2, color0, fract(weight));
+                float nu = float(result) - log2(log2(length(z)));
+                float t = clamp(nu / float(uIters), 0.0, 1.0);
+                gl_FragColor.rgb += paletteColor(t);
             }
         }
     }
@@ -615,10 +899,10 @@ export const createDistanceMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Mandelbrot set with distance-based coloring
+        fragmentShader: `// Mandelbrot set with distance-based coloring
 // You can increase the antialiasing level here by increasing ANTIALIAS.${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-#define ITERATIONS 150
+// Iterations controlled by uIters
 
 vec2 cmul(vec2 a, vec2 b) {
     return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
@@ -641,7 +925,8 @@ void main() {
 			vec2 z = vec2(0.0);
 			vec2 dz = vec2(0.0);
 			vec2 c = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y);
-			for (int i = 0; i < ITERATIONS; i++) {
+            for (int i = 0; i < MAX_ITERS; i++) {
+                if (i >= uIters) {broke = 1.0; break;}
 				if (dot(z, z) > 1024.0) {broke = 1.0; break;}
 
 				// Z' -> 2·Z·Z' + 1
@@ -651,19 +936,13 @@ void main() {
 				z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
 			}
 
-			// d(c) = |Z|·log|Z|/|Z'|
+            // d(c) = |Z|·log|Z|/|Z'|
 			float distance = 0.5 * sqrt(dot(z,z) / dot(dz,dz)) * log(dot(z,z));
 			if (broke < 0.5) distance = 0.0;
 			
-			// Coloring
-			if (dot(z, z) >= 4.0) {
-				float weight = fract(clamp(pow(4.0 * distance, 0.03), 0.0, 1.0) * 3.0) * 3.0;
-				vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-				vec3 color1 = vec3(1.0, 0.5, 0.0);
-				vec3 color2 = vec3(0.0, 0.0, 0.5);
-				if (weight < 1.0) gl_FragColor.rgb += mix(color0, color1, fract(weight)); 
-				else if (weight < 2.0) gl_FragColor.rgb += mix(color1, color2, fract(weight));  
-				else gl_FragColor.rgb += mix(color2, color0, fract(weight));
+            if (dot(z, z) >= 4.0) {
+                float t = clamp(pow(4.0 * distance, 0.03), 0.0, 1.0);
+                gl_FragColor.rgb += paletteColor(t);
 			}
 		}
 	}
@@ -673,14 +952,56 @@ void main() {
   });
 };
 
+// Heatmap with axis overlay (no palette) to debug iteration and visibility
+export const createHeatmapMaterial = (): THREE.RawShaderMaterial => {
+    return new THREE.RawShaderMaterial({
+        uniforms: createDefaultUniforms(),
+        vertexShader: defaultVertexShader,
+    fragmentShader: `// Heatmap iteration debug${fragmentShaderTopShared}
+#undef MAX_ITERS
+#define MAX_ITERS 1024
+#define ANTIALIAS_LEVEL 1
+
+void main() {
+    vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
+    gl_FragColor = vec4(0.0);
+
+    vec2 cellSize = scale / resolution;
+    const float invAA = 1.0 / float(ANTIALIAS_LEVEL);
+    for (int yi = 0; yi < ANTIALIAS_LEVEL; yi++) {
+        for (int xi = 0; xi < ANTIALIAS_LEVEL; xi++) {
+            vec2 jitter = vec2((float(xi) + 0.5) * invAA, (float(yi) + 0.5) * invAA);
+            vec2 c = vec2(worldCoord.x + jitter.x * cellSize.x, worldCoord.y + jitter.y * cellSize.y);
+            vec2 z = vec2(0.0);
+            int it = 0;
+            for (int i = 1; i <= MAX_ITERS; i++) {
+                if (i > uIters) { it = i; break; }
+                z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
+                if (dot(z,z) > 4.0) { it = i; break; }
+            }
+            float t = clamp(float(it) / max(float(uIters), 1.0), 0.0, 1.0);
+            gl_FragColor.rgb += vec3(t);
+        }
+    }
+    gl_FragColor.rgb /= float(ANTIALIAS_LEVEL * ANTIALIAS_LEVEL);
+
+    // Axis overlay
+    float thickness = scale / resolution.y;
+    if (abs(worldCoord.x) < thickness || abs(worldCoord.y) < thickness) {
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0), 0.85);
+    }
+    gl_FragColor.a = 1.0;
+}`
+    });
+};
+
 // Tricorn (Mandelbar) - Uses complex conjugate
 export const createTricornMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Tricorn (Mandelbar) fractal - uses conjugate z̄² + c${fragmentShaderTopShared}
+        fragmentShader: `// Tricorn (Mandelbar) fractal - uses conjugate z̄² + c${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-#define ITERATIONS 150
 
 void main() {
 	vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
@@ -694,21 +1015,17 @@ void main() {
 
             int result = 0;
             vec2 z = vec2(0.0, 0.0);
-            for (int i = 1; i <= ITERATIONS; i++) {  
+            for (int i = 1; i <= MAX_ITERS; i++) {  
+                if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
                 // Conjugate: z̄² = (x - iy)² = x² - y² - 2ixy
                 z = vec2(z.x * z.x - z.y * z.y, -2.0 * z.x * z.y) + c;  
             }
 
-            // Vibrant Coloring
             if (dot(z, z) >= 4.0) {
-                float weight = fract(clamp((float(result) - log2(log2(length(z)))) / float(ITERATIONS), 0.0, 1.0) * 3.0) * 3.0;
-                vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-                vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-                vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-                if (weight < 1.0) gl_FragColor.rgb += mix(color0, color1, fract(weight)); 
-                else if (weight < 2.0) gl_FragColor.rgb += mix(color1, color2, fract(weight));  
-                else gl_FragColor.rgb += mix(color2, color0, fract(weight));
+                float nu = float(result) - log2(log2(length(z)));
+                float t = clamp(nu / float(uIters), 0.0, 1.0);
+                gl_FragColor.rgb += paletteColor(t);
             }
         }
     }
@@ -723,7 +1040,7 @@ export const createNewtonMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Newton's fractal for z³ - 1 = 0${fragmentShaderTopShared}
+        fragmentShader: `// Newton's fractal for z³ - 1 = 0${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 #define ITERATIONS 50
 
@@ -771,17 +1088,10 @@ void main() {
             float angle = atan(z.y, z.x);
             float root = mod(angle + 3.14159, 6.28318) / 2.09439; // Normalize to 0-3
             
-            vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan - root 1
-            vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink - root 2
-            vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow - root 3
-            
-            float convergenceSpeed = float(result) / float(ITERATIONS);
-            vec3 baseColor;
-            if (root < 1.0) baseColor = color0;
-            else if (root < 2.0) baseColor = color1;
-            else baseColor = color2;
-            
-            gl_FragColor.rgb += baseColor * (1.0 - convergenceSpeed * 0.5);
+                        // Map to palette using angle and speed for subtle variation
+                        float convergenceSpeed = float(result) / float(ITERATIONS);
+                        float t = clamp((root / 3.0) * 0.6 + (1.0 - convergenceSpeed) * 0.4, 0.0, 1.0);
+                        gl_FragColor.rgb += paletteColor(t);
         }
     }
 
@@ -795,93 +1105,37 @@ export const createIFSMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Sierpinski Triangle via Chaos Game${fragmentShaderTopShared}
+        fragmentShader: `// Sierpinski Triangle via domain folding${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 
 void main() {
-	vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
-	gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-
-	const float aa = float(ANTIALIAS_LEVEL);
-	vec2 cellSize = scale / resolution;
-	
-	for (float y = 0.0; y < 1.0; y += 1.0 / aa) {
-		for (float x = 0.0; x < 1.0; x += 1.0 / aa) {
+    vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
+    gl_FragColor = vec4(0.0);
+    const float aa = float(ANTIALIAS_LEVEL);
+    vec2 cellSize = scale / resolution;
+    for (float y = 0.0; y < 1.0; y += 1.0/aa) {
+        for (float x = 0.0; x < 1.0; x += 1.0/aa) {
             vec2 p = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y);
-            
-            // Three vertices of equilateral triangle
-            vec2 v1 = vec2(0.0, 0.0);
-            vec2 v2 = vec2(1.0, 0.0);
-            vec2 v3 = vec2(0.5, 0.866);
-            
-            // Check if point forms Sierpinski triangle pattern
-            // Using the deterministic subdivision approach
-            vec2 testPoint = p * 2.0; // Scale into working space
-            
-            float intensity = 0.0;
-            
-            // Test multiple iterations of subdivision
-            for (int iter = 0; iter < 8; iter++) {
-                // Center of triangle
-                vec2 center = (v1 + v2 + v3) / 3.0;
-                
-                // Check which sub-triangle the point is in
-                vec2 localP = testPoint - center;
-                
-                // Barycentric test simplified
-                float s1 = sign(localP.x - 0.0);
-                float s2 = sign(localP.y - 0.0);
-                
-                // Determine which third to remove (middle)
-                vec2 mid1 = (v1 + v2) * 0.5;
-                vec2 mid2 = (v2 + v3) * 0.5;
-                vec2 mid3 = (v3 + v1) * 0.5;
-                
-                // Check if in removed region (middle triangle)
-                float d1 = length(testPoint - mid1);
-                float d2 = length(testPoint - mid2);
-                float d3 = length(testPoint - mid3);
-                
-                float minDist = min(d1, min(d2, d3));
-                
-                // If too close to midpoints, it's in removed region
-                if (minDist < 0.15 / pow(2.0, float(iter))) {
-                    intensity = 0.0;
-                    break;
-                }
-                
-                // Scale down for next iteration
-                testPoint = testPoint * 2.0;
-                
-                if (iter > 3) {
-                    intensity = 1.0;
-                }
+            // Normalize to [0,1] triangle domain
+            p = (p + vec2(1.0)) * 0.5;
+            float m = 0.0;
+            for (int i = 0; i < 8; i++) {
+                if (p.x + p.y > 1.0) p = vec2(1.0) - p;
+                p = fract(p * 2.0);
+                m += 1.0;
             }
-            
-            if (intensity > 0.0) {
-                // Colorful gradient based on position
-                vec3 color0 = vec3(0.0, 0.7, 1.0);  // Cyan
-                vec3 color1 = vec3(1.0, 0.0, 0.5);  // Hot pink
-                vec3 color2 = vec3(1.0, 0.9, 0.0);  // Bright yellow
-                
-                float colorMix = fract(p.x * 2.0 + p.y * 3.0);
-                vec3 finalColor;
-                if (colorMix < 0.33) finalColor = color0;
-                else if (colorMix < 0.66) finalColor = color1;
-                else finalColor = color2;
-                
-                gl_FragColor.rgb += finalColor * intensity;
-            }
+            float t = m / 8.0;
+            gl_FragColor.rgb += samplePalette(t);
         }
     }
-
     gl_FragColor.rgb /= aa * aa;
+    gl_FragColor.a = 1.0;
 }`
   });
 };
 
 export const materials = {
-  normal: createMandelbrotMaterial,
+    normal: () => createCustomMaterial('z^2 + c'),
   hp: createHighPrecisionMaterial,
   burningShip: createBurningShipMaterial,
   semi: createSemiBurningShipMaterial,
@@ -891,6 +1145,11 @@ export const materials = {
   tricorn: createTricornMaterial,
   newton: createNewtonMaterial,
   ifs: createIFSMaterial,
+    rgbTest: createRGBTestMaterial,
+    mono: createMandelbrotMonoMaterial,
+    paletteRamp: createPaletteRampMaterial,
+    heatmap: createHeatmapMaterial,
+    debug: createDebugGradientMaterial,
   custom: createMandelbrotMaterial // Placeholder, will be overridden dynamically
 } as const;
 
