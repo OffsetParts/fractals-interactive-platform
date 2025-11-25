@@ -4,7 +4,9 @@
  */
 
 import * as THREE from 'three';
-import { getPaletteTexture, DEFAULT_PALETTE, PaletteName } from '@/lib/utils/palettes';
+import { getPaletteTexture, DEFAULT_PALETTE } from '@/lib/utils/palettes';
+import { parseEquationToAst } from '@/lib/math/equation-parser-chevrotain';
+import { emitGlsl } from '@/lib/math/equation-glsl-emitter';
 
 export interface ShaderUniforms {
   time: { value: number };
@@ -124,156 +126,67 @@ vec2 cabs(vec2 z){ return vec2(abs(z.x), abs(z.y)); }
 const fragmentShaderTopAnimateOn = fragmentShaderTopShared + `#define ANIMATE 1 // Set to 1 to render the fractal every frame. Set to 0 to only render upon interaction.
 uniform float time; // Time since program start, in seconds\n\n`;
 
-// Sanitize and parse equation string to GLSL code, ensuring a 'c' term exists
-function sanitizeEquation(equation: string): string {
-    let eq = equation.trim();
-    // Normalize uppercase C constant to lowercase c if standalone
-    eq = eq.replace(/(^|[^A-Za-z0-9_])C(?![A-Za-z0-9_])/g, '$1c');
-    // Trailing '+' => append 'c'
-    if (/\+$/.test(eq)) eq += ' c';
-    // Ensure at least one 'c' token (not part of identifier)
-    if (!/(^|[^A-Za-z0-9_])c(?![A-Za-z0-9_])/i.test(eq)) eq += ' + c';
-    return eq;
-}
-
+// Very small, safe DSL for equations used in custom material.
+// Supported canonical forms (spaces ignored, case-insensitive):
+//   - z^2 + c
+//   - z^n + c      (uses uPower)
+//   - |z|^2 + c    or abs(z)^2 + c   (Burning Ship style)
+//   - conj(z)^2 + c                  (Tricorn style)
+// Anything else falls back to z^2 + c.
 function parseEquationToGLSL(equation: string): string {
-    const src = sanitizeEquation(equation);
-    // Normalize fragmented decimal exponents produced by upstream tokenization
-    let normalized = src
-        // z^(0.5) -> z^0.5
-        .replace(/z\^\(\s*([0-9]*\.?[0-9]+)\s*\)/g, 'z^$1')
-        // z^0 *.5 or z^2 *.25 -> z^0.5 / z^2.25
-        .replace(/z\^(\d+)\s*\*\s*\.?([0-9]+)/g, (_m, a: string, b: string) => `z^${a}.${b}`)
-        .replace(/z\^(0)\s*\*\s*\.([0-9]+)/g, (_m, a: string, b: string) => `z^${a}.${b}`)
-        // Parenthesized form z^( *0.5) -> z^0.5 (possible artifact)
-        .replace(/z\^\(\s*\*\s*([0-9]*\.?[0-9]+)\s*\)/g, 'z^$1')
-        // |z|^n and abs(z)^n -> cpow(componentwise_abs, uPower)
-        .replace(/\|\s*z\s*\|\s*\^\s*n\b/gi, 'cpow(vec2(abs(z.x),abs(z.y)), uPower)')
-        .replace(/abs\(\s*z\s*\)\s*\^\s*n\b/gi, 'cpow(vec2(abs(z.x),abs(z.y)), uPower)')
-        // |z|^p and abs(z)^p -> cpow(componentwise_abs, p)
-        .replace(/\|\s*z\s*\|\s*\^\s*((?:\d*\.\d+|\d+))/gi, (_m, p: string) => `cpow(vec2(abs(z.x),abs(z.y)), ${p}.0)`) 
-        .replace(/abs\(\s*z\s*\)\s*\^\s*((?:\d*\.\d+|\d+))/gi, (_m, p: string) => `cpow(vec2(abs(z.x),abs(z.y)), ${p}.0)`) 
-        // |z| -> cabs(z) (user expectation: componentwise burning ship style)
-        .replace(/\|z\|/g, 'cabs(z)')
-        // abs(z) powers special-case BEFORE generic abs(z) replacement
-        .replace(/abs\(z\)\^2/g,'ABSZ_SQ')
-        .replace(/abs\(z\)\^3/g,'ABSZ_CU')
-        .replace(/cabs\(z\)\^2/g,'CABSZ_SQ')
-        .replace(/cabs\(z\)\^3/g,'CABSZ_CU')
-        .replace(/conj\(z\)\^2/g,'CONJZ_SQ')
-        .replace(/conj\(z\)\^3/g,'CONJZ_CU');
-
-    let glsl = normalized
-        .replace(/z\*\*((?:\d*\.\d+|\d+))/g, (_: string, exp: string) => {
-            const n = parseInt(exp);
-            if (n === 2) return 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)';
-            if (n === 3) return 'cmul(cmul(z, z), z)';
-            return `cpow(z, ${exp}.0)`;
-        })
-        // Variable exponent: z**n or z^n -> cpow(z, uPower)
-        .replace(/z\*\*n\b/gi, 'cpow(z, uPower)')
-        .replace(/z\^n\b/gi, 'cpow(z, uPower)')
-        // Fallback: bare 'z**' with neither digit nor n -> square
-        .replace(/z\*\*(?![\dn])/g, 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)')
-        // Expand tagged special forms
-        .replace(/ABSZ_SQ/g,'vec2(abs(z.x)*abs(z.x) - abs(z.y)*abs(z.y), 2.0*abs(z.x)*abs(z.y))')
-        .replace(/ABSZ_CU/g,'cmul(cmul(vec2(abs(z.x),abs(z.y)), vec2(abs(z.x),abs(z.y))), vec2(abs(z.x),abs(z.y)))')
-        .replace(/CABSZ_SQ/g,'vec2(abs(z.x)*abs(z.x) - abs(z.y)*abs(z.y), 2.0*abs(z.x)*abs(z.y))')
-        .replace(/CABSZ_CU/g,'cmul(cmul(vec2(abs(z.x),abs(z.y)), vec2(abs(z.x),abs(z.y))), vec2(abs(z.x),abs(z.y)))')
-        .replace(/CONJZ_SQ/g,'vec2(z.x*z.x - z.y*z.y, -2.0*z.x*z.y)')
-        .replace(/CONJZ_CU/g,'cmul(cmul(vec2(z.x,-z.y), vec2(z.x,-z.y)), vec2(z.x,-z.y))')
-        // Basic componentwise abs / conjugate fallback
-        .replace(/abs\(z\)/g, 'vec2(abs(z.x), abs(z.y))')
-        .replace(/cabs\(z\)/g, 'vec2(abs(z.x), abs(z.y))')
-        .replace(/conj\(z\)/g, 'vec2(z.x, -z.y)')
-        .replace(/z\^2/g, 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y)')
-        .replace(/z\^3/g, 'cmul(cmul(z, z), z)')
-        .replace(/z\^((?:\d*\.\d+|\d+))/g, (_m, exp: string) => `cpow(z, ${exp}.0)`) // generic caret power, floats too
-        .replace(/\+\s*c/g, '+ c');
-    // re(expr) and im(expr)
-    glsl = glsl.replace(/\bre\(([^()]+)\)/gi, (_m, e: string) => `((${e})).x`);
-    glsl = glsl.replace(/\bim\(([^()]+)\)/gi, (_m, e: string) => `((${e})).y`);
-    // real()/imag() synonyms
-    glsl = glsl.replace(/\breal\(([^()]+)\)/gi, (_m, e: string) => `((${e})).x`);
-    glsl = glsl.replace(/\bimag\(([^()]+)\)/gi, (_m, e: string) => `((${e})).y`);
-    // arg(expr) -> angle as (theta,0)
-    glsl = glsl.replace(/\barg\(([^()]+)\)/gi, (_m, e: string) => `carg(${e})`);
-    // sin/cos/exp/log mapping for complex values
-    glsl = glsl.replace(/\bsin\(([^()]+)\)/gi, (_m, e: string) => `csin(${e})`);
-    glsl = glsl.replace(/\bcos\(([^()]+)\)/gi, (_m, e: string) => `ccos(${e})`);
-    glsl = glsl.replace(/\bexp\(([^()]+)\)/gi, (_m, e: string) => `cexp(${e})`);
-    glsl = glsl.replace(/\blog\(([^()]+)\)/gi, (_m, e: string) => `clog(${e})`);
-
-
-    // Complex literal a+bi or a-bi -> vec2(a, b)
-    glsl = glsl.replace(/([+-]?\d+(?:\.\d+)?)\s*([+-])\s*(\d+(?:\.\d+)?)i\b/g, (_m, a: string, s: string, b: string) => {
-        const ra = a.includes('.') ? a : `${a}.0`;
-        const rb = b.includes('.') ? b : `${b}.0`;
-        const ib = s === '-' ? `-${rb}` : rb;
-        return `vec2(${ra}, ${ib})`;
-    });
-    // Pure imaginary bi -> vec2(0, b)
-    glsl = glsl.replace(/([+-]?\d+(?:\.\d+)?)i\b/g, (_m, b: string) => {
-        const rb = b.includes('.') ? b : `${b}.0`;
-        return `vec2(0.0, ${rb})`;
-    });
-    // Pure real number additions/subtractions already coerced below, but also handle standalone numbers -> vec2(n,0) when adjacent to vector math
-    glsl = glsl.replace(/\b([+-]?\d+(?:\.\d+)?)\b(?=\s*\+\s*c)/g, (_m, n: string) => {
-        const rn = n.includes('.') ? n : `${n}.0`;
-        return `vec2(${rn}, 0.0)`;
-    });
-
-    // Scalar multiply/divide: z * k -> cmul(z, vec2(k,0)), k * z -> cmul(vec2(k,0), z), z / k -> cmul(z, vec2(1.0/k,0))
-    glsl = glsl.replace(/\bz\s*\*\s*([+-]?\d+(?:\.\d+)?)/g, (_m, k: string) => {
-        const rk = k.includes('.') ? k : `${k}.0`;
-        return `cmul(z, vec2(${rk}, 0.0))`;
-    });
-    glsl = glsl.replace(/([+-]?\d+(?:\.\d+)?)\s*\*\s*\bz\b/g, (_m, k: string) => {
-        const rk = k.includes('.') ? k : `${k}.0`;
-        return `cmul(vec2(${rk}, 0.0), z)`;
-    });
-    glsl = glsl.replace(/\bz\s*\/\s*([+-]?\d+(?:\.\d+)?)/g, (_m, k: string) => {
-        const rk = k.includes('.') ? k : `${k}.0`;
-        return `cmul(z, vec2(${`(1.0/${rk})`}, 0.0))`;
-    });
-
-    // Power on general vec2/parenthesized expressions with floats: **N or ^N
-    glsl = glsl.replace(/(vec2\([^()]*\))\s*\*\*\s*((?:\d*\.\d+|\d+))/g, (_m, expr: string, exp: string) => `cpow(${expr}, ${exp}.0)`);
-    glsl = glsl.replace(/(vec2\([^()]*\))\s*\^\s*((?:\d*\.\d+|\d+))/g, (_m, expr: string, exp: string) => `cpow(${expr}, ${exp}.0)`);
-    glsl = glsl.replace(/\(([^()]+)\)\s*\*\*\s*((?:\d*\.\d+|\d+))/g, (_m, expr: string, exp: string) => `cpow((${expr}), ${exp}.0)`);
-    glsl = glsl.replace(/\(([^()]+)\)\s*\^\s*((?:\d*\.\d+|\d+))/g, (_m, expr: string, exp: string) => `cpow((${expr}), ${exp}.0)`);
-    // Function call base: f(args)^N or **N
-    // Function call base: capture entire call before exponent (avoid dropping args)
-    glsl = glsl.replace(/((?:[A-Za-z_][A-Za-z0-9_]*)\([^()]*\))\s*\^\s*((?:\d*\.\d+|\d+))/g, (_m, call: string, exp: string) => `cpow(${call}, ${exp}.0)`);
-    glsl = glsl.replace(/((?:[A-Za-z_][A-Za-z0-9_]*)\([^()]*\))\s*\*\*\s*((?:\d*\.\d+|\d+))/g, (_m, call: string, exp: string) => `cpow(${call}, ${exp}.0)`);
-    // Variable exponent with function call base
-    glsl = glsl.replace(/((?:[A-Za-z_][A-Za-z0-9_]*)\([^()]*\))\s*\^\s*n\b/gi, (_m, call: string) => `cpow(${call}, uPower)`);
-    glsl = glsl.replace(/((?:[A-Za-z_][A-Za-z0-9_]*)\([^()]*\))\s*\*\*\s*n\b/gi, (_m, call: string) => `cpow(${call}, uPower)`);
-    // Variable exponent on parenthesized or vec2 expressions: **n or ^n
-    glsl = glsl.replace(/(vec2\([^()]*\))\s*\*\*\s*n\b/gi, (_m, expr: string) => `cpow(${expr}, uPower)`);
-    glsl = glsl.replace(/(vec2\([^()]*\))\s*\^\s*n\b/gi, (_m, expr: string) => `cpow(${expr}, uPower)`);
-    glsl = glsl.replace(/\(([^()]+)\)\s*\*\*\s*n\b/gi, (_m, expr: string) => `cpow((${expr}), uPower)`);
-    glsl = glsl.replace(/\(([^()]+)\)\s*\^\s*n\b/gi, (_m, expr: string) => `cpow((${expr}), uPower)`);
-
-    // Coerce standalone numeric additions/subtractions to complex constants
-    // e.g., '+ 0' -> '+ vec2(0.0, 0.0)', '+ 2.5' -> '+ vec2(2.5, 0.0)'
-    glsl = glsl.replace(/([+\-])\s*(\d+(?:\.\d+)?)(?![\d.])/g, (_, sign: string, num: string) => {
-        const f = num.includes('.') ? num : `${num}.0`;
-        return `${sign} vec2(${f}, 0.0)`;
-    });
-
-    // Ensure each iteration expression ends with a '+ c' term; if not, append
-    // (Provided sanitizeEquation already added one global 'c', but user might write z*z without + c)
-    if (!/\+\s*c\s*$/i.test(glsl.trim())) {
-        glsl = glsl.trim() + ' + c';
+    // First, try the Chevrotain-based parser + AST -> GLSL path.
+    try {
+        const ast = parseEquationToAst(equation);
+        const expr = emitGlsl(ast);
+        // Ensure we always add "+ c" so the fractal depends on c.
+        return `${expr} + c`;
+    } catch (err) {
+        console.warn('[Equation parser] Falling back to minimal DSL for', equation, err);
     }
-    return glsl;
+
+    // Fallback: existing small, safe DSL for a few canonical forms.
+    const raw = equation.trim().toLowerCase().replace(/\s+/g, '');
+    const src = raw.endsWith('+c') ? raw : `${raw}+c`;
+
+    if (src === 'z^2+c' || src === 'z*z+c') {
+        return 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c';
+    }
+
+    if (src === 'z^n+c' || src === 'z**n+c') {
+        return 'cpow(z, uPower) + c';
+    }
+
+    const zPowConstMatch = src.match(/^z\^([0-9]+)\+c$/);
+    if (zPowConstMatch) {
+        const k = parseInt(zPowConstMatch[1], 10);
+        if (k === 2) {
+            return 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c';
+        }
+        if (k === 3) {
+            return 'cmul(cmul(z, z), z) + c';
+        }
+        return `cpow(z, ${k}.0) + c`;
+    }
+
+    if (src === '|z|^2+c' || src === 'abs(z)^2+c') {
+        return 'vec2(abs(z.x) * abs(z.x) - abs(z.y) * abs(z.y), 2.0 * abs(z.x) * abs(z.y)) + c';
+    }
+
+    if (src === 'conj(z)^2+c') {
+        return 'vec2(z.x * z.x - z.y * z.y, -2.0 * z.x * z.y) + c';
+    }
+
+    console.warn('[Fractal equation] Unsupported equation, falling back to z^2 + c:', equation);
+    return 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c';
 }
 
 // Create custom material from equation
 export const createCustomMaterial = (equation: string): THREE.RawShaderMaterial => {
   const glslIteration = parseEquationToGLSL(equation);
-  
+  if (typeof window !== 'undefined') {
+    console.log('[Fractal equation GLSL]', equation, '=>', glslIteration);
+  }
+
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
@@ -284,7 +197,10 @@ vec2 cmul(vec2 a, vec2 b) {
     return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
 }
 
-// Complex divide by real via reciprocal multiply can be done using cmul
+vec2 cdiv(vec2 a, vec2 b) {
+    float d = dot(b, b);
+    return vec2((a.x * b.x + a.y * b.y) / d, (a.y * b.x - a.x * b.y) / d);
+}
 
 vec2 cpow(vec2 z, float exponent) {
     float angle = atan(z.y, z.x);

@@ -35,6 +35,55 @@ export function parseEquation(equation: string): ParsedEquation {
 }
 
 /**
+ * Lightweight syntax validation for equation input
+ * - Balanced parentheses and even number of '|'
+ * - Allowed characters only
+ * - Detect obviously invalid operator runs
+ */
+export function validateEquationSyntax(equation: string): { ok: boolean; message?: string } {
+  const eq = equation.trim();
+  if (!eq) return { ok: false, message: 'Empty equation' };
+
+  // Allowed characters (ASCII operators, letters, digits, spaces, pipes, comma, dot)
+  if (!/^[0-9a-zA-Z_\s+\-*/^().,|]+$/.test(eq)) {
+    return { ok: false, message: 'Contains disallowed characters' };
+  }
+
+  // Balanced parentheses
+  let depth = 0;
+  for (const ch of eq) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth--;
+    if (depth < 0) return { ok: false, message: 'Unbalanced parentheses' };
+  }
+  if (depth !== 0) return { ok: false, message: 'Unbalanced parentheses' };
+
+  // Even number of pipes '|' (for forms like |z|)
+  const pipeCount = (eq.match(/\|/g) || []).length;
+  if (pipeCount % 2 !== 0) return { ok: false, message: 'Unmatched | delimiter' };
+
+  // Basic invalid operator runs (e.g., +*, ***, ^^ not part of **)
+  if (/([+\-*/^]{3,})/.test(eq)) {
+    return { ok: false, message: 'Invalid operator sequence' };
+  }
+  if (/([+\-*/^])\s*\)/.test(eq)) {
+    return { ok: false, message: 'Dangling operator before )' };
+  }
+  if (/\(\s*([+*/^])/.test(eq)) {
+    return { ok: false, message: 'Dangling operator after (' };
+  }
+
+  // Accept common power notations: ^ and **
+  // Quick sanity: if single ^ appears, ensure a base and exponent exist around it
+  const carets = eq.match(/\^/g)?.length || 0;
+  if (carets > 0 && !/(\S)\s*\^\s*(\w|\()/i.test(eq)) {
+    return { ok: false, message: 'Invalid power syntax' };
+  }
+
+  return { ok: true };
+}
+
+/**
  * Normalize equation input (handle various formats)
  */
 function normalizeEquation(eq: string): string {

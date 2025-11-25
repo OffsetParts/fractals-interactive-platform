@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { MouseControls, ViewportState } from '@/lib/mouse-controls';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
 /**
  * Test page for mouse controls without expensive fractal rendering
@@ -9,29 +8,17 @@ import { MouseControls, ViewportState } from '@/lib/mouse-controls';
  */
 export default function ControlsTestPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const mouseControlsRef = useRef<MouseControls | null>(null);
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const [fps, setFps] = useState(60);
   const frameCountRef = useRef(0);
   const lastTimeRef = useRef(Date.now());
 
-  // Initialize mouse controls
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    mouseControlsRef.current = new MouseControls(canvas, (newViewport: ViewportState) => {
-      setViewport({
-        x: newViewport.x,
-        y: newViewport.y,
-        zoom: newViewport.zoom
-      });
-    });
-
-    return () => {
-      mouseControlsRef.current?.destroy();
-    };
-  }, []);
+  // Simple drag/zoom state
+  const dragRef = useRef({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+  });
 
   // Render test pattern
   useEffect(() => {
@@ -164,6 +151,64 @@ export default function ControlsTestPage() {
     return () => resizeObserver.disconnect();
   }, []);
 
+  // Interaction handlers (pan/zoom)
+  const onMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    dragRef.current.dragging = true;
+    dragRef.current.startX = e.clientX;
+    dragRef.current.startY = e.clientY;
+  }, []);
+
+  const onMouseUp = useCallback(() => {
+    dragRef.current.dragging = false;
+  }, []);
+
+  const onMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!dragRef.current.dragging) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+
+    setViewport(v => ({
+      x: v.x - (dx / v.zoom),
+      y: v.y - (dy / v.zoom),
+      zoom: v.zoom,
+    }));
+
+    dragRef.current.startX = e.clientX;
+    dragRef.current.startY = e.clientY;
+  }, []);
+
+  const onWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+
+    setViewport(v => {
+      const zoomFactor = e.deltaY > 0 ? 1 / 1.08 : 1.08; // ~8% per tick
+      const newZoom = Math.max(0.01, Math.min(100, v.zoom * zoomFactor));
+
+      // Keep cursor position fixed during zoom
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const worldXBefore = (px - centerX) / v.zoom + v.x;
+      const worldYBefore = (py - centerY) / v.zoom + v.y;
+      const worldXAfter = (px - centerX) / newZoom + v.x;
+      const worldYAfter = (py - centerY) / newZoom + v.y;
+
+      return {
+        x: v.x + (worldXBefore - worldXAfter),
+        y: v.y + (worldYBefore - worldYAfter),
+        zoom: newZoom,
+      };
+    });
+  }, []);
+
   return (
     <div className="h-screen w-screen flex flex-col bg-black">
       {/* Header */}
@@ -183,6 +228,11 @@ export default function ControlsTestPage() {
       <div className="flex-1 relative">
         <canvas
           ref={canvasRef}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
+          onWheel={onWheel}
           className="absolute inset-0 w-full h-full cursor-move"
         />
       </div>

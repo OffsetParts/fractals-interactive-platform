@@ -288,6 +288,8 @@ export default function FractalExplorer() {
             equation={currentEquation}
             onEquationChange={handleEquationChange}
             parsed={null}
+            power={power}
+            onPowerChange={setPower}
           />
         </div>
       </div>

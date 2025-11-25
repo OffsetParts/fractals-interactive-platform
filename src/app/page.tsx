@@ -26,13 +26,13 @@ export default function Home() {
       </nav>
 
       {/* Hero Section */}
-      <section className="min-h-screen flex items-center justify-center pt-16 bg-gradient-to-br from-white via-blue-50 to-white px-4 relative overflow-hidden z-10">
+      <section className="min-h-screen flex items-center justify-center pt-16 bg-linear-to-br from-white via-blue-50 to-white px-4 relative overflow-hidden z-10">
 
         <div className="max-w-6xl mx-auto text-center space-y-8 relative z-20">
           <div className="space-y-4">
             <h1 className="text-6xl lg:text-7xl font-bold tracking-tight text-gray-900">
               Explore Infinite
-              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"> Mathematical Beauty</span>
+              <span className="bg-linear-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"> Mathematical Beauty</span>
             </h1>
             <p className="text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed">
               Real-time interactive visualization of fractals with GPU-powered precision. 
@@ -160,7 +160,7 @@ export default function Home() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-r from-blue-600 to-purple-600">
+      <section className="py-20 bg-linear-to-r from-blue-600 to-purple-600">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-8">
           <h2 className="text-4xl font-bold text-white">Ready to Explore?</h2>
           <p className="text-xl text-blue-100">
