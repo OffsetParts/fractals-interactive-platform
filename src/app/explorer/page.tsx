@@ -2,17 +2,12 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
 import { ThreeJsFractalRenderer } from '@/components/fractals/ThreeJsFractalRenderer';
 import { CompactControls } from '@/components/fractals/compact-controls';
+import { ParameterControls } from '@/components/fractals/parameter-controls';
+import { AnimationControls } from '@/components/fractals/animation-controls';
 import { MaterialKey } from '@/lib/webgl/shader-materials';
 import { ALL_PALETTES, DEFAULT_PALETTE, PaletteName } from '@/lib/utils/palettes';
-
-// Dynamically import EquationDisplay with no SSR (requires MathJax)
-const EquationDisplay = dynamic(
-  () => import('@/components/fractals/equation-display').then(mod => ({ default: mod.EquationDisplay })),
-  { ssr: false }
-);
 
 interface FractalViewport {
   x: number;
@@ -20,74 +15,61 @@ interface FractalViewport {
   zoom: number;
 }
 
-// Preset equations that auto-fill the equation bar
-const PRESET_EQUATIONS: Record<string, { label: string; defaultIterations: number; materialKey: MaterialKey; equation: string; viewport?: FractalViewport }> = {
-  mandelbrot: { label: 'Mandelbrot', defaultIterations: 256, materialKey: 'normal', equation: 'z^2 + c' },
-  burningship: { label: 'Burning Ship', defaultIterations: 256, materialKey: 'burningShip', equation: '|z|^2 + c' },
-  burningship_z3: { label: 'Burning Ship z³', defaultIterations: 256, materialKey: 'burningShipZ3', equation: '|z|^3 + c' },
-  burningship_semi: { label: 'Semi Burning Ship', defaultIterations: 256, materialKey: 'semi', equation: '(\\text{Re}(z) + |\\text{Im}(z)|i)^2 + c' },
-  julia: { label: 'Julia Set', defaultIterations: 200, materialKey: 'julia', equation: 'z^2 + c_{\\text{const}}' },
-  tricorn: { label: 'Tricorn (Mandelbar)', defaultIterations: 256, materialKey: 'tricorn', equation: '\\bar{z}^2 + c' },
-  newton: { label: "Newton's Fractal", defaultIterations: 50, materialKey: 'newton', equation: 'z - \\frac{z^3 - 1}{3z^2}' },
-  ifs: { 
-    label: 'IFS (Sierpinski)', 
-    defaultIterations: 15, 
-    materialKey: 'ifs', 
-    equation: '\\text{IFS}(z)',
-    viewport: { x: 0, y: 0.2, zoom: 1.8 }
-  },
-  mono: { label: 'Mandelbrot (Grayscale)', defaultIterations: 256, materialKey: 'mono', equation: 'z^2 + c' },
-  rgbTest: { label: 'RGB Test (No Palette)', defaultIterations: 1, materialKey: 'rgbTest', equation: 'test' },
-  paletteRamp: { label: 'Palette Ramp', defaultIterations: 1, materialKey: 'paletteRamp', equation: 'ramp' },
-  heatmap: {
-    label: 'Heatmap Debug',
-    defaultIterations: 128,
-    materialKey: 'heatmap',
-    equation: 'heatmap',
-    viewport: { x: 0, y: 0, zoom: 1 }
-  },
-  debug: {
-    label: 'Debug Gradient',
-    defaultIterations: 50,
-    materialKey: 'debug',
-    equation: 'debug',
-    viewport: { x: 0, y: 0, zoom: 1 }
-  }
+// Fractal presets with parameterization
+const PRESET_EQUATIONS: Record<string, { label: string; defaultIterations: number; materialKey: MaterialKey; viewport?: FractalViewport }> = {
+  mandelbrot: { label: 'Mandelbrot', defaultIterations: 50, materialKey: 'normal' },
+  burningship: { label: 'Burning Ship', defaultIterations: 50, materialKey: 'burningShip' },
+  burningship_z3: { label: 'Burning Ship z³', defaultIterations: 50, materialKey: 'burningShipZ3' },
+  burningship_semi: { label: 'Semi Burning Ship', defaultIterations: 50, materialKey: 'semi' },
+  julia: { label: 'Julia Set', defaultIterations: 50, materialKey: 'julia' },
+  tricorn: { label: 'Tricorn (Mandelbar)', defaultIterations: 50, materialKey: 'tricorn' },
+  newton: { label: "Newton's Fractal", defaultIterations: 50, materialKey: 'newton' },
+  spiral: { label: 'Spiral/Galaxy (z + c)', defaultIterations: 50, materialKey: 'spiral', viewport: { x: 0, y: 0, zoom: 1.5 } }
 };
 
 export default function FractalExplorer() {
   // Material/renderer state
-  const [currentMaterial, setCurrentMaterial] = useState<MaterialKey>('debug');
-  const [currentEquation, setCurrentEquation] = useState<string>(PRESET_EQUATIONS.debug.equation);
-  const [currentPresetKey, setCurrentPresetKey] = useState<string>('debug');
-  const [isCustomEquation, setIsCustomEquation] = useState<boolean>(false);
+  const [currentMaterial, setCurrentMaterial] = useState<MaterialKey>('normal');
+  const [currentPresetKey, setCurrentPresetKey] = useState<string>('mandelbrot');
   const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
 
+  // Complex parameter state
+  const [zReal, setZReal] = useState<number>(0.0);
+  const [zImag, setZImag] = useState<number>(0.0);
+  const [cReal, setCReal] = useState<number>(0.0);
+  const [cImag, setCImag] = useState<number>(0.0);
+  const [xReal, setXReal] = useState<number>(2.0); // Default exponent is 2 (classic Mandelbrot/Julia)
+  const [xImag, setXImag] = useState<number>(0.0);
+
   // Core state
-  const [maxIterations, setMaxIterations] = useState<number>(PRESET_EQUATIONS.debug.defaultIterations);
+  const [maxIterations, setMaxIterations] = useState<number>(50);
   const [palette, setPalette] = useState<PaletteName>(DEFAULT_PALETTE);
-  const [autoIters, setAutoIters] = useState<boolean>(true);
-  const [autoTone, setAutoTone] = useState<boolean>(true);
+  const [autoIters, setAutoIters] = useState<boolean>(false);
+  const [autoTone, setAutoTone] = useState<boolean>(false);
   const [gamma, setGamma] = useState<number>(1.15);
   const [bandStrength, setBandStrength] = useState<number>(0.85);
   const [bandCenter, setBandCenter] = useState<number>(0.88);
   const [bandWidth, setBandWidth] = useState<number>(0.035);
-  const [interiorEnabled, setInteriorEnabled] = useState<boolean>(true);
+  const [interiorEnabled, setInteriorEnabled] = useState<boolean>(false);
   const [bands, setBands] = useState<number>(0);
   const [power, setPower] = useState<number>(2.0);
 
   // Viewport state
-  const [viewport, setViewport] = useState<FractalViewport>({ x: 0, y: 0, zoom: 1 });
+  const [viewport, setViewport] = useState<FractalViewport>({ x: -0.8, y: 0, zoom: 1.5 });
 
   // Rendering stats
   const [fps, setFps] = useState<number>(60);
 
   // UI visibility states for collapsible panels
-  const [showEquation, setShowEquation] = useState<boolean>(true);
+  const [showParameters, setShowParameters] = useState<boolean>(true);
   const [showControls, setShowControls] = useState<boolean>(true);
   const [showStats, setShowStats] = useState<boolean>(true);
-  const [showEqHelp, setShowEqHelp] = useState<boolean>(false);
   const fpsCounterRef = useRef<{ frameCount: number; lastTime: number }>({ frameCount: 0, lastTime: Date.now() });
+
+  // Animation state
+  const [isAnimating, setIsAnimating] = useState<boolean>(false);
+  const [animationSpeed, setAnimationSpeed] = useState<number>(1.0);
+  const animationFrameRef = useRef<number>(0);
 
   // Initialize window size on mount
   useEffect(() => {
@@ -112,8 +94,8 @@ export default function FractalExplorer() {
       }
 
       switch (e.key.toLowerCase()) {
-        case 'e':
-          setShowEquation((prev) => !prev);
+        case 'p':
+          setShowParameters((prev) => !prev);
           break;
         case 'c':
           setShowControls((prev) => !prev);
@@ -123,13 +105,13 @@ export default function FractalExplorer() {
           break;
         case 'h':
           // Hide all panels
-          setShowEquation(false);
+          setShowParameters(false);
           setShowControls(false);
           setShowStats(false);
           break;
         case 'a':
           // Show all panels
-          setShowEquation(true);
+          setShowParameters(true);
           setShowControls(true);
           setShowStats(true);
           break;
@@ -147,26 +129,22 @@ export default function FractalExplorer() {
 
     // Track current preset
     setCurrentPresetKey(presetKey);
-    setIsCustomEquation(false);
 
-    // Set material, equation, and iterations
+    // Set material and iterations
     setCurrentMaterial(preset.materialKey);
-    setCurrentEquation(preset.equation);
     setMaxIterations(preset.defaultIterations);
 
     // Use custom viewport if provided, otherwise use default
     const newViewport: FractalViewport = preset.viewport || { x: -0.8, y: 0, zoom: 1.5 };
     setViewport(newViewport);
-  };
 
-  // Handle equation change - switch to custom mode
-  const handleEquationChange = (newEquation: string) => {
-    setCurrentEquation(newEquation);
-    if (!isCustomEquation) {
-      setIsCustomEquation(true);
-      setCurrentMaterial('custom');
-      setCurrentPresetKey('custom');
-    }
+    // Reset parameters to defaults
+    setZReal(0.0);
+    setZImag(0.0);
+    setCReal(0.0);
+    setCImag(0.0);
+    setXReal(2.0);
+    setXImag(0.0);
   };
 
   // Handle reset - returns to current preset's default view
@@ -194,6 +172,38 @@ export default function FractalExplorer() {
     }
   }, []);
 
+  // Animation loop - rotates through c values for Julia-like effects
+  useEffect(() => {
+    if (!isAnimating) {
+      cancelAnimationFrame(animationFrameRef.current);
+      return;
+    }
+
+    const animate = () => {
+      const time = Date.now() * 0.0005 * animationSpeed;
+      
+      // Animate c parameters in a circular pattern
+      setCReal(0.7 * Math.cos(time * 0.5));
+      setCImag(0.7 * Math.sin(time * 0.5));
+      
+      // Animate exponent for X-Set exploration
+      setXReal(2.0 + 1.0 * Math.sin(time * 0.3));
+      setXImag(0.5 * Math.cos(time * 0.4));
+      
+      // Optionally animate z0 for interesting effects
+      // setZReal(0.3 * Math.sin(time * 0.2));
+      // setZImag(0.3 * Math.cos(time * 0.25));
+      
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+    
+    return () => {
+      cancelAnimationFrame(animationFrameRef.current);
+    };
+  }, [isAnimating, animationSpeed]);
+
   return (
     <div className="w-full h-screen relative bg-black overflow-hidden">
       {/* Full-screen THREE.js Canvas */}
@@ -202,7 +212,6 @@ export default function FractalExplorer() {
           width={windowSize.width}
           height={windowSize.height}
           materialKey={currentMaterial}
-          customEquation={isCustomEquation ? currentEquation : undefined}
           initialViewport={viewport}
           iterations={maxIterations}
           paletteName={palette}
@@ -215,6 +224,12 @@ export default function FractalExplorer() {
           interiorEnabled={interiorEnabled}
           bands={bands}
           power={power}
+          zReal={zReal}
+          zImag={zImag}
+          cReal={cReal}
+          cImag={cImag}
+          xReal={xReal}
+          xImag={xImag}
           onZoom={(zoomLevel) => {
             setViewport((prev) => ({ ...prev, zoom: zoomLevel }));
             handleFrameUpdate();
@@ -243,54 +258,56 @@ export default function FractalExplorer() {
         </div>
       </div>
 
-      {/* Floating Equation Panel - Bottom Center */}
+      {/* Floating Parameter Panel - Bottom Center */}
       <div
         className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 transition-transform duration-300"
-        style={{ transform: showEquation ? 'translate(-50%, 0)' : 'translate(-50%, 150%)' }}
+        style={{ transform: showParameters ? 'translate(-50%, 0)' : 'translate(-50%, 150%)' }}
       >
-        <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-4 min-w-[400px] max-w-[600px] pointer-events-auto">
+        <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-4 min-w-[600px] max-w-[700px] pointer-events-auto">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Current Equation</h2>
+            <h2 className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Complex Parameters</h2>
             <button
-              onClick={() => setShowEquation(false)}
+              onClick={() => setShowParameters(false)}
               className="text-gray-500 hover:text-gray-300 transition text-xs"
             >
               ✕ Hide
             </button>
           </div>
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs text-gray-500">Type expressions like <code>z^n + c</code>, <code>abs(z)^2 + c</code></div>
-            <button
-              onClick={() => setShowEqHelp((v) => !v)}
-              className="text-gray-400 hover:text-white text-xs border border-gray-700 rounded px-2 py-0.5"
-              title="Show supported functions and examples"
-            >
-              ? Help
-            </button>
-          </div>
-          {showEqHelp && (
-            <div className="text-[11px] text-gray-300 bg-black/40 border border-gray-700/50 rounded p-2 mb-3 space-y-1">
-              <div className="font-semibold text-white/90">Supported</div>
-              <div><span className="text-gray-400">Variables:</span> <code>z</code>, <code>c</code></div>
-              <div><span className="text-gray-400">Ops:</span> <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>^</code>, <code>**</code>, exponent <code>n</code></div>
-              <div><span className="text-gray-400">Powers:</span> <code>z^2</code>, <code>z^3</code>, <code>z^0.5</code>, <code>z^n</code>, <code>(expr)^n</code></div>
-              <div><span className="text-gray-400">Abs/Conj:</span> <code>abs(z)</code>, <code>|z|</code> (componentwise), <code>conj(z)</code></div>
-              <div><span className="text-gray-400">Re/Im:</span> <code>re(expr)</code>, <code>im(expr)</code>, <code>real()</code>, <code>imag()</code></div>
-              <div><span className="text-gray-400">Complex:</span> <code>sin</code>, <code>cos</code>, <code>exp</code>, <code>log</code>, <code>arg</code>, modulus <code>cmod(z)</code></div>
-              <div className="text-gray-400">Examples:</div>
-              <div><code>z^n + c</code></div>
-              <div><code>abs(z)^2 + c</code>, <code>|z|^n + c</code> (Burning Ship)</div>
-              <div><code>conj(z)^2 + c</code> (Tricorn)</div>
-              <div><code>(z + 0.3i)^0.5 + c</code></div>
+          
+          {/* Equation Display */}
+          <div className="mb-3 p-3 bg-black/40 border border-cyan-500/20 rounded-lg">
+            <div className="font-mono text-sm text-cyan-300 text-center">
+              z<sub>n+1</sub> = z<sub>n</sub><sup>x</sup> + c
             </div>
-          )}
-          <EquationDisplay
-            equation={currentEquation}
-            onEquationChange={handleEquationChange}
-            parsed={null}
-            power={power}
-            onPowerChange={setPower}
+            <div className="font-mono text-xs text-gray-400 text-center mt-1">
+              where x = {xReal.toFixed(2)} {xImag >= 0 ? '+' : ''} {xImag.toFixed(2)}i
+            </div>
+          </div>
+
+          <ParameterControls
+            z_real={zReal}
+            z_imag={zImag}
+            c_real={cReal}
+            c_imag={cImag}
+            x_real={xReal}
+            x_imag={xImag}
+            onZRealChange={setZReal}
+            onZImagChange={setZImag}
+            onCRealChange={setCReal}
+            onCImagChange={setCImag}
+            onXRealChange={setXReal}
+            onXImagChange={setXImag}
           />
+
+          {/* Animation Controls */}
+          <div className="mt-3">
+            <AnimationControls
+              isPlaying={isAnimating}
+              onTogglePlay={() => setIsAnimating(!isAnimating)}
+              speed={animationSpeed}
+              onSpeedChange={setAnimationSpeed}
+            />
+          </div>
         </div>
       </div>
 
@@ -388,13 +405,13 @@ export default function FractalExplorer() {
 
       {/* Toggle Buttons - Left Side (only visible when panels are hidden) */}
       <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex flex-col gap-2">
-        {!showEquation && (
+        {!showParameters && (
           <button
-            onClick={() => setShowEquation(true)}
+            onClick={() => setShowParameters(true)}
             className="bg-black/60 backdrop-blur-sm border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/80 transition pointer-events-auto"
-            title="Show Equation (E)"
+            title="Show Parameters (P)"
           >
-            <span className="text-sm">📐</span>
+            <span className="text-sm">🎛️</span>
           </button>
         )}
         {!showControls && (
@@ -422,7 +439,7 @@ export default function FractalExplorer() {
         <div className="font-semibold mb-2 text-white">Shortcuts</div>
         <div className="space-y-1 font-mono text-[9px]">
           <div>
-            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">E</kbd> Equation
+            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">P</kbd> Parameters
           </div>
           <div>
             <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">C</kbd> Fractals

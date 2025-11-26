@@ -25,6 +25,12 @@ export interface ThreeJsFractalRendererProps {
   interiorEnabled?: boolean;
   bands?: number;
   power?: number; // exponent parameter for z^n when equation uses 'n'
+  zReal?: number;
+  zImag?: number;
+  cReal?: number;
+  cImag?: number;
+  xReal?: number;
+  xImag?: number;
 }
 
 interface ViewState {
@@ -53,6 +59,12 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
   interiorEnabled = true,
   bands = 0,
   power = 2.0,
+  zReal = 0.0,
+  zImag = 0.0,
+  cReal = 0.0,
+  cImag = 0.0,
+  xReal = 2.0,
+  xImag = 0.0,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -166,6 +178,9 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
     material.uniforms.palette.value = getPaletteTexture(paletteName);
     material.uniforms.uIters.value = iterations;
     if (material.uniforms.uPower) material.uniforms.uPower.value = power;
+    if (material.uniforms.uZ0) material.uniforms.uZ0.value = new THREE.Vector2(zReal, zImag);
+    if (material.uniforms.uC) material.uniforms.uC.value = new THREE.Vector2(cReal, cImag);
+    if (material.uniforms.uX) material.uniforms.uX.value = new THREE.Vector2(xReal, xImag);
     if (material.uniforms.uGamma) material.uniforms.uGamma.value = toneParamsRef.current.gamma;
     if (material.uniforms.uBandStrength) material.uniforms.uBandStrength.value = toneParamsRef.current.bandStrength;
     if (material.uniforms.uBandCenter) material.uniforms.uBandCenter.value = toneParamsRef.current.bandCenter;
@@ -275,6 +290,20 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
       materialRef.current.uniforms.uPower.value = power;
     }
   }, [power]);
+
+  // Update z, c, and x parameters
+  useEffect(() => {
+    if (!materialRef.current) return;
+    if (materialRef.current.uniforms.uZ0) {
+      materialRef.current.uniforms.uZ0.value = new THREE.Vector2(zReal, zImag);
+    }
+    if (materialRef.current.uniforms.uC) {
+      materialRef.current.uniforms.uC.value = new THREE.Vector2(cReal, cImag);
+    }
+    if (materialRef.current.uniforms.uX) {
+      materialRef.current.uniforms.uX.value = new THREE.Vector2(xReal, xImag);
+    }
+  }, [zReal, zImag, cReal, cImag, xReal, xImag]);
 
   useEffect(() => {
     if (!materialRef.current) return;

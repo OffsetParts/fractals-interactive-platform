@@ -118,19 +118,6 @@ export function CompactControls({
         />
       </div>
 
-      {/* Auto Iterations Toggle */}
-      <div className="mt-2">
-        <label className="flex items-center text-sm text-gray-300">
-          <input
-            type="checkbox"
-            className="mr-2"
-            checked={autoIterations}
-            onChange={(e) => onAutoIterationsChange?.(e.target.checked)}
-          />
-          Auto Iterations (FPS adaptive)
-        </label>
-      </div>
-
       {/* Tone Controls */}
       <div className="space-y-3">
         <div>
@@ -164,27 +151,13 @@ export function CompactControls({
         <div className="grid grid-cols-2 gap-3 items-center">
           <label className="flex items-center text-sm text-gray-300">
             <input type="checkbox" className="mr-2" checked={interiorEnabled} onChange={(e) => onInteriorEnabledChange?.(e.target.checked)} />
-            Interior Blue
+            Complex Plane Grid
           </label>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">Bands: {bands}</label>
             <input type="range" min="0" max="64" step="1" value={bands} onChange={(e) => onBandsChange?.(parseInt(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
           </div>
         </div>
-      </div>
-
-      {/* Power (n) for z^n when used in equation */}
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2" title="Used when your equation includes z^n, (expr)^n or **n">Power n: {((power ?? 2).toFixed(2))}</label>
-        <input
-          type="range"
-          min="0.1"
-          max="8.0"
-          step="0.01"
-          value={power ?? 2}
-          onChange={(e) => onPowerChange?.(parseFloat(e.target.value))}
-          className="w-full h-2 bg-gray-700 rounded"
-        />
       </div>
 
       {/* Palette Selector */}

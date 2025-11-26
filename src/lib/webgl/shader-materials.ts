@@ -5,8 +5,6 @@
 
 import * as THREE from 'three';
 import { getPaletteTexture, DEFAULT_PALETTE } from '@/lib/utils/palettes';
-import { parseEquationToAst } from '@/lib/math/equation-parser-chevrotain';
-import { emitGlsl } from '@/lib/math/equation-glsl-emitter';
 
 export interface ShaderUniforms {
   time: { value: number };
@@ -24,6 +22,9 @@ export interface ShaderUniforms {
         uInteriorColor: { value: THREE.Vector3 };
         uInteriorEnabled: { value: number };
                 uBands: { value: number };
+        uZ0: { value: THREE.Vector2 };
+        uC: { value: THREE.Vector2 };
+        uX: { value: THREE.Vector2 };
   [uniform: string]: { value: unknown };
 }
 
@@ -44,6 +45,9 @@ const createDefaultUniforms = (): ShaderUniforms => ({
         uInteriorEnabled: { value: 1 },
         uBands: { value: 0 },
         uPower: { value: 2.0 },
+        uZ0: { value: new THREE.Vector2(0.0, 0.0) },
+        uC: { value: new THREE.Vector2(0.0, 0.0) },
+        uX: { value: new THREE.Vector2(2.0, 0.0) },
 });
 
 const defaultVertexShader = `
@@ -81,8 +85,40 @@ uniform int uInteriorEnabled; // 1 to color interior, 0 to keep black
 uniform int uBands; // optional quantization bands (0 = off)
 // Equation parameterization
 uniform float uPower; // exponent for z^n when 'n' is used in equation
+uniform vec2 uZ0; // Initial z value (for Julia set mode)
+uniform vec2 uC; // Constant c value (for parameterized fractals)
+uniform vec2 uX; // Complex exponent (x_r + x_i*i) for z^x
 
 #define MAX_ITERS 512
+
+// Complex number operations
+vec2 cmul(vec2 a, vec2 b) {
+    return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+// Complex division
+vec2 cdiv(vec2 a, vec2 b) {
+    float d = dot(b, b);
+    if (d < 1e-10) return vec2(0.0);
+    return vec2((a.x * b.x + a.y * b.y) / d, (a.y * b.x - a.x * b.y) / d);
+}
+
+// Complex power z^x for complex x (using ln)
+vec2 cpow(vec2 z, vec2 x) {
+    float r = length(z);
+    if (r < 1e-10) return vec2(0.0);
+    
+    float theta = atan(z.y, z.x);
+    float ln_r = log(r);
+    
+    // z^x = exp(x * ln(z)) = exp((x_r + i*x_i) * (ln|z| + i*arg(z)))
+    // = exp(x_r*ln|z| - x_i*arg(z) + i*(x_i*ln|z| + x_r*arg(z)))
+    float real_exp = x.x * ln_r - x.y * theta;
+    float imag_exp = x.y * ln_r + x.x * theta;
+    float exp_real = exp(real_exp);
+    
+    return vec2(exp_real * cos(imag_exp), exp_real * sin(imag_exp));
+}
 
 vec3 paletteColor(float t) {
     return texture2D(palette, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
@@ -100,6 +136,35 @@ vec3 samplePalette(float t) {
     float band = exp(-0.5 * pow((tt - uBandCenter) / denom, 2.0));
     col = mix(col, vec3(1.0), clamp(uBandStrength, 0.0, 1.0) * band);
     return col;
+}
+
+// Complex plane grid overlay
+vec3 applyGrid(vec3 color, vec2 worldCoord) {
+    if (uInteriorEnabled == 0) return color;
+    
+    // Grid spacing in world coordinates
+    float gridSpacing = 1.0;
+    float lineWidth = scale * 0.003; // Adaptive line width based on zoom
+    
+    // Calculate grid lines
+    vec2 grid = abs(fract(worldCoord / gridSpacing - 0.5) - 0.5) / fract(vec2(lineWidth) / gridSpacing);
+    float line = min(grid.x, grid.y);
+    
+    // Axis lines (thicker)
+    float axisWidth = lineWidth * 2.0;
+    float axisX = step(abs(worldCoord.y), axisWidth);
+    float axisY = step(abs(worldCoord.x), axisWidth);
+    float axis = max(axisX, axisY);
+    
+    // Mix grid and axes
+    vec3 gridColor = vec3(0.3, 0.3, 0.4); // Subtle blue-gray
+    vec3 axisColor = vec3(0.6, 0.6, 0.7); // Brighter for axes
+    
+    float gridAlpha = smoothstep(1.0, 0.0, line);
+    color = mix(color, gridColor, gridAlpha * 0.3);
+    color = mix(color, axisColor, axis * 0.5);
+    
+    return color;
 }
 
 // --- Complex helpers ---
@@ -123,90 +188,13 @@ vec2 cabs(vec2 z){ return vec2(abs(z.x), abs(z.y)); }
 
 `;
 
-const fragmentShaderTopAnimateOn = fragmentShaderTopShared + `#define ANIMATE 1 // Set to 1 to render the fractal every frame. Set to 0 to only render upon interaction.
-uniform float time; // Time since program start, in seconds\n\n`;
-
-// Very small, safe DSL for equations used in custom material.
-// Supported canonical forms (spaces ignored, case-insensitive):
-//   - z^2 + c
-//   - z^n + c      (uses uPower)
-//   - |z|^2 + c    or abs(z)^2 + c   (Burning Ship style)
-//   - conj(z)^2 + c                  (Tricorn style)
-// Anything else falls back to z^2 + c.
-function parseEquationToGLSL(equation: string): string {
-    // First, try the Chevrotain-based parser + AST -> GLSL path.
-    try {
-        const ast = parseEquationToAst(equation);
-        const expr = emitGlsl(ast);
-        // Ensure we always add "+ c" so the fractal depends on c.
-        return `${expr} + c`;
-    } catch (err) {
-        console.warn('[Equation parser] Falling back to minimal DSL for', equation, err);
-    }
-
-    // Fallback: existing small, safe DSL for a few canonical forms.
-    const raw = equation.trim().toLowerCase().replace(/\s+/g, '');
-    const src = raw.endsWith('+c') ? raw : `${raw}+c`;
-
-    if (src === 'z^2+c' || src === 'z*z+c') {
-        return 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c';
-    }
-
-    if (src === 'z^n+c' || src === 'z**n+c') {
-        return 'cpow(z, uPower) + c';
-    }
-
-    const zPowConstMatch = src.match(/^z\^([0-9]+)\+c$/);
-    if (zPowConstMatch) {
-        const k = parseInt(zPowConstMatch[1], 10);
-        if (k === 2) {
-            return 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c';
-        }
-        if (k === 3) {
-            return 'cmul(cmul(z, z), z) + c';
-        }
-        return `cpow(z, ${k}.0) + c`;
-    }
-
-    if (src === '|z|^2+c' || src === 'abs(z)^2+c') {
-        return 'vec2(abs(z.x) * abs(z.x) - abs(z.y) * abs(z.y), 2.0 * abs(z.x) * abs(z.y)) + c';
-    }
-
-    if (src === 'conj(z)^2+c') {
-        return 'vec2(z.x * z.x - z.y * z.y, -2.0 * z.x * z.y) + c';
-    }
-
-    console.warn('[Fractal equation] Unsupported equation, falling back to z^2 + c:', equation);
-    return 'vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c';
-}
-
-// Create custom material from equation
-export const createCustomMaterial = (equation: string): THREE.RawShaderMaterial => {
-  const glslIteration = parseEquationToGLSL(equation);
-  if (typeof window !== 'undefined') {
-    console.log('[Fractal equation GLSL]', equation, '=>', glslIteration);
-  }
-
+// Create custom Mandelbrot material with complex exponent control via uX uniform
+export const createCustomMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Custom fractal: ${equation}${fragmentShaderTopShared}
+    fragmentShader: `// Custom Mandelbrot${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-
-vec2 cmul(vec2 a, vec2 b) {
-    return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
-}
-
-vec2 cdiv(vec2 a, vec2 b) {
-    float d = dot(b, b);
-    return vec2((a.x * b.x + a.y * b.y) / d, (a.y * b.x - a.x * b.y) / d);
-}
-
-vec2 cpow(vec2 z, float exponent) {
-    float angle = atan(z.y, z.x);
-    float r = length(z);
-    return pow(r, exponent) * vec2(cos(exponent * angle), sin(exponent * angle));
-}
 
 void main() {
 	vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
@@ -217,19 +205,32 @@ void main() {
 	float insideAccum = 0.0;
 	for (float y = 0.0; y < 1.0; y += 1.0 / aa) {
 		for (float x = 0.0; x < 1.0; x += 1.0 / aa) {
-            vec2 c = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y);
+            vec2 c = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y) + uC;
 
             int result = 0;
-            vec2 z = vec2(0.0, 0.0);
+            vec2 z = uZ0;
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
-                z = ${glslIteration};
+                z = cpow(z, uX) + c;  // Use complex exponentiation with uX
             }
 
-            // Smooth gradient coloring via palette
+            // Smooth gradient coloring via palette with exponent-aware smoothing
             if (dot(z, z) >= 4.0) {
-                float nu = float(result) - log2(log2(length(z)));
+                // Calculate the exponent magnitude for smooth transition
+                float expMag = length(uX);
+                
+                // Standard smoothing (works well for |x| > 1)
+                float smoothVal = float(result) - log2(log2(length(z)));
+                
+                // No smoothing (better for |x| near 1)
+                float noSmoothVal = float(result);
+                
+                // Smooth transition between methods as |x| approaches 1
+                // Transition occurs between |x| = 0.8 and |x| = 1.5
+                float blendFactor = smoothstep(0.8, 1.5, expMag);
+                float nu = mix(noSmoothVal, smoothVal, blendFactor);
+                
                 float t = clamp(nu / max(float(uIters), 1.0), 0.0, 1.0);
                 gl_FragColor.rgb += samplePalette(t);
             } else {
@@ -240,10 +241,9 @@ void main() {
 
     float totalSamples = aa * aa;
     gl_FragColor.rgb /= totalSamples;
-    if (uInteriorEnabled == 1) {
-        float fracInside = insideAccum / totalSamples;
-        gl_FragColor.rgb = mix(gl_FragColor.rgb, uInteriorColor, clamp(fracInside, 0.0, 1.0));
-    }
+    
+    // Apply complex plane grid overlay
+    gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
 }`
   });
 };
@@ -619,15 +619,6 @@ export const createBurningShipMaterial = (): THREE.RawShaderMaterial => {
         fragmentShader: `// Burning ship fractal${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 
-vec2 cmul(vec2 a, vec2 b) {
-    return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
-}
-
-vec2 cpow(vec2 z, float exponent) {
-    float angle = atan(z.y / z.x);
-    return pow(length(z), exponent) * vec2(cos(exponent * angle), sin(exponent * angle));
-}
-
 void main() {
 	vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
 	gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -670,15 +661,6 @@ export const createSemiBurningShipMaterial = (): THREE.RawShaderMaterial => {
 // the complex number is made absolute${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 
-vec2 cmul(vec2 a, vec2 b) {
-    return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
-}
-
-vec2 cpow(vec2 z, float exponent) {
-    float angle = atan(z.y / z.x);
-    return pow(length(z), exponent) * vec2(cos(exponent * angle), sin(exponent * angle));
-}
-
 void main() {
 	vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
 	gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -720,15 +702,6 @@ export const createBurningShipZ3Material = (): THREE.RawShaderMaterial => {
         fragmentShader: `// z^3 burning ship fractal${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 
-vec2 cmul(vec2 a, vec2 b) {
-    return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
-}
-
-vec2 cpow(vec2 z, float exponent) {
-    float angle = atan(z.y / z.x);
-    return pow(length(z), exponent) * vec2(cos(exponent * angle), sin(exponent * angle));
-}
-
 void main() {
 	vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
 	gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -767,17 +740,8 @@ export const createJuliaMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-        fragmentShader: `// Julia fractal${fragmentShaderTopAnimateOn}
+        fragmentShader: `// Julia fractal${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
-
-vec2 cmul(vec2 a, vec2 b) {
-    return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
-}
-
-vec2 cpow(vec2 z, float exponent) {
-    float angle = atan(z.y / z.x);
-    return pow(length(z), exponent) * vec2(cos(exponent * angle), sin(exponent * angle));
-}
 
 void main() {
 	vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
@@ -790,15 +754,21 @@ void main() {
             vec2 z = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y);
             
             int result = 0;
-            vec2 c = vec2(-0.73 + sin(0.27015 * 2.0 + time * 0.2) * 0.05, 0.27015);
+            vec2 c = uC; // Julia set uses constant c from sliders
             for (int i = 1; i <= MAX_ITERS; i++) {
                 if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 100000.0) {result = i; break;}
-                z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
+                z = cpow(z, uX) + c;  // Use complex exponentiation
             }
 
             if (dot(z, z) >= 4.0) {
-                float nu = float(result) - log2(log2(length(z)));
+                // Exponent-aware smoothing for better rendering at low exponents
+                float expMag = length(uX);
+                float smoothVal = float(result) - log2(log2(length(z)));
+                float noSmoothVal = float(result);
+                float blendFactor = smoothstep(0.8, 1.5, expMag);
+                float nu = mix(noSmoothVal, smoothVal, blendFactor);
+                
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
                 gl_FragColor.rgb += paletteColor(t);
             }
@@ -806,6 +776,9 @@ void main() {
     }
     
     gl_FragColor.rgb /= aa * aa;
+    
+    // Apply complex plane grid overlay
+    gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
 }`
   });
 };
@@ -960,15 +933,6 @@ export const createNewtonMaterial = (): THREE.RawShaderMaterial => {
 #define ANTIALIAS_LEVEL 1
 #define ITERATIONS 50
 
-vec2 cmul(vec2 a, vec2 b) {
-    return vec2(a.x * b.x - a.y * b.y, a.y * b.x + a.x * b.y);
-}
-
-vec2 cdiv(vec2 a, vec2 b) {
-    float d = dot(b, b);
-    return vec2((a.x * b.x + a.y * b.y) / d, (a.y * b.x - a.x * b.y) / d);
-}
-
 void main() {
 	vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
 	gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -987,7 +951,8 @@ void main() {
                 vec2 fz = z3 - vec2(1.0, 0.0);
                 
                 // f'(z) = 3z²
-                vec2 fpz = 3.0 * z2;
+                vec2 fpz = vec2(3.0, 0.0);
+                fpz = cmul(fpz, z2);
                 
                 // Newton: z_new = z - f(z)/f'(z)
                 vec2 delta = cdiv(fz, fpz);
@@ -1016,12 +981,69 @@ void main() {
   });
 };
 
+// Spiral/Galaxy fractal: z_{n+1} = z_n + c (simple additive iteration)
+export const createSpiralMaterial = (): THREE.RawShaderMaterial => {
+  return new THREE.RawShaderMaterial({
+    uniforms: createDefaultUniforms(),
+    vertexShader: defaultVertexShader,
+    fragmentShader: `// Spiral/Galaxy fractal${fragmentShaderTopShared}
+#define ANTIALIAS_LEVEL 1
+
+void main() {
+    vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+
+    const float aa = float(ANTIALIAS_LEVEL);
+    vec2 cellSize = scale / resolution;
+    for (float y = 0.0; y < 1.0; y += 1.0 / aa) {
+        for (float x = 0.0; x < 1.0; x += 1.0 / aa) {
+            vec2 z = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y);
+            vec2 c = uC; // Use c from sliders
+            
+            int result = 0;
+            float minDist = 1e10;
+            
+            for (int i = 1; i <= MAX_ITERS; i++) {
+                if (i > uIters) { result = i; break; }
+                
+                // Simple additive iteration: z_{n+1} = z_n + c
+                z = z + c;
+                
+                float dist = length(z);
+                minDist = min(minDist, dist);
+                
+                // Escape condition
+                if (dist > 100.0) { result = i; break; }
+            }
+
+            // Color based on minimum distance (creates spiral patterns)
+            float t = clamp(log(minDist + 1.0) / log(10.0), 0.0, 1.0);
+            
+            // Add iteration count for variation
+            if (result < uIters) {
+                float nu = float(result) / float(uIters);
+                t = mix(t, nu, 0.5);
+            }
+            
+            gl_FragColor.rgb += samplePalette(t);
+        }
+    }
+    
+    gl_FragColor.rgb /= aa * aa;
+    
+    // Apply complex plane grid overlay
+    gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
+}`
+  });
+};
+
 // IFS (Sierpinski Triangle) - Using Chaos Game algorithm
 export const createIFSMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-        fragmentShader: `// Sierpinski Triangle via domain folding${fragmentShaderTopShared}
+        fragmentShader: `// Sierpinski Triangle via domain folding
+${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 
 void main() {
@@ -1051,7 +1073,7 @@ void main() {
 };
 
 export const materials = {
-    normal: () => createCustomMaterial('z^2 + c'),
+    normal: createCustomMaterial,
   hp: createHighPrecisionMaterial,
   burningShip: createBurningShipMaterial,
   semi: createSemiBurningShipMaterial,
@@ -1060,6 +1082,7 @@ export const materials = {
   distance: createDistanceMaterial,
   tricorn: createTricornMaterial,
   newton: createNewtonMaterial,
+  spiral: createSpiralMaterial,
   ifs: createIFSMaterial,
     rgbTest: createRGBTestMaterial,
     mono: createMandelbrotMonoMaterial,
