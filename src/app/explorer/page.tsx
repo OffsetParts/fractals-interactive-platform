@@ -229,32 +229,171 @@ export default function FractalExplorer() {
   const handleCanvasClick = useCallback((normalizedX: number, normalizedY: number, complexX: number, complexY: number) => {
     if (!sonicEnabled || !synthRef.current) return;
 
-    // Calculate Mandelbrot iterations for the clicked point
     let x = 0;
     let y = 0;
     let iteration = 0;
+    let c_real = complexX;
+    let c_imag = complexY;
 
-    // Use c from click position for Mandelbrot, or use sliders for Julia
-    const c_real = currentMaterial === 'julia' ? cReal : complexX;
-    const c_imag = currentMaterial === 'julia' ? cImag : complexY;
+    // Set up initial values based on fractal type
+    switch (currentMaterial) {
+      case 'julia':
+        // Julia: c is constant from sliders, z starts at click position
+        x = complexX;
+        y = complexY;
+        c_real = cReal;
+        c_imag = cImag;
+        break;
+      
+      case 'burningShip':
+      case 'burningShipZ3':
+      case 'semi':
+        // Burning Ship variants: c from click, z starts at 0
+        x = 0;
+        y = 0;
+        c_real = complexX;
+        c_imag = complexY;
+        break;
 
-    // For Julia set, use click as starting z position
-    if (currentMaterial === 'julia') {
-      x = complexX;
-      y = complexY;
+      case 'tricorn':
+        // Tricorn: c from click, z starts at 0
+        x = 0;
+        y = 0;
+        c_real = complexX;
+        c_imag = complexY;
+        break;
+
+      case 'newton':
+        // Newton: z starts at click position
+        x = complexX;
+        y = complexY;
+        break;
+
+      case 'spiral':
+        // Spiral: c from click, z starts at 0
+        x = 0;
+        y = 0;
+        c_real = complexX;
+        c_imag = complexY;
+        break;
+
+      default:
+        // Mandelbrot and custom: c from click, z starts at 0 (or use sliders if set)
+        x = zReal;
+        y = zImag;
+        c_real = complexX;
+        c_imag = complexY;
     }
 
-    // Mandelbrot/Julia iteration
-    while (x * x + y * y <= 4 && iteration < maxIterations) {
-      const xtemp = x * x - y * y + c_real;
-      y = 2 * x * y + c_imag;
-      x = xtemp;
-      iteration++;
+    // Iterate based on fractal type
+    if (currentMaterial === 'burningShip') {
+      // Burning Ship: z = (|Re(z)| + i|Im(z)|)^2 + c
+      while (x * x + y * y <= 256 && iteration < maxIterations) {
+        const absX = Math.abs(x);
+        const absY = Math.abs(y);
+        const xtemp = absX * absX - absY * absY + c_real;
+        y = 2 * absX * absY + c_imag;
+        x = xtemp;
+        iteration++;
+      }
+    } else if (currentMaterial === 'burningShipZ3') {
+      // Burning Ship z^3
+      while (x * x + y * y <= 256 && iteration < maxIterations) {
+        const absX = Math.abs(x);
+        const absY = Math.abs(y);
+        const r2 = absX * absX + absY * absY;
+        const r = Math.sqrt(r2);
+        const xtemp = r2 * absX - 3.0 * absX * absY * absY + c_real;
+        y = 3.0 * absX * absX * absY - r2 * absY + c_imag;
+        x = xtemp;
+        iteration++;
+      }
+    } else if (currentMaterial === 'semi') {
+      // Semi Burning Ship
+      while (x * x + y * y <= 256 && iteration < maxIterations) {
+        const absX = Math.abs(x);
+        const xtemp = absX * absX - y * y + c_real;
+        y = 2 * absX * y + c_imag;
+        x = xtemp;
+        iteration++;
+      }
+    } else if (currentMaterial === 'tricorn') {
+      // Tricorn: z = conj(z)^2 + c
+      while (x * x + y * y <= 256 && iteration < maxIterations) {
+        const xtemp = x * x - y * y + c_real;
+        y = -2 * x * y + c_imag; // Negative conjugate
+        x = xtemp;
+        iteration++;
+      }
+    } else if (currentMaterial === 'newton') {
+      // Newton's method for z^3 - 1 = 0
+      for (let i = 0; i < maxIterations; i++) {
+        const x2 = x * x;
+        const y2 = y * y;
+        const x3_minus_3xy2 = x2 * x - 3 * x * y2;
+        const y3x2_minus_y3 = 3 * x2 * y - y2 * y;
+        
+        // f(z) = z^3 - 1
+        const fx = x3_minus_3xy2 - 1.0;
+        const fy = y3x2_minus_y3;
+        
+        // f'(z) = 3z^2
+        const fpx = 3.0 * (x2 - y2);
+        const fpy = 3.0 * 2.0 * x * y;
+        
+        // Complex division: f(z) / f'(z)
+        const denom = fpx * fpx + fpy * fpy;
+        if (denom < 1e-10) break;
+        
+        const divRe = (fx * fpx + fy * fpy) / denom;
+        const divIm = (fy * fpx - fx * fpy) / denom;
+        
+        // Newton iteration: z = z - f(z)/f'(z)
+        x = x - divRe;
+        y = y - divIm;
+        
+        // Check convergence
+        if (divRe * divRe + divIm * divIm < 1e-6) {
+          iteration = i;
+          break;
+        }
+        iteration = i + 1;
+      }
+    } else if (currentMaterial === 'spiral') {
+      // Spiral: z = z + c (additive instead of multiplicative)
+      while (x * x + y * y <= 100 && iteration < maxIterations) {
+        x = x + c_real;
+        y = y + c_imag;
+        iteration++;
+      }
+    } else {
+      // Standard Mandelbrot/Julia with complex exponentiation: z = z^x + c
+      while (x * x + y * y <= 256 && iteration < maxIterations) {
+        // Complex exponentiation: z^x where x = xReal + i*xImag
+        const zMag = Math.sqrt(x * x + y * y);
+        if (zMag < 1e-10) break;
+        
+        const zArg = Math.atan2(y, x);
+        const logZMag = Math.log(zMag);
+        
+        // x * ln(z) = (xReal + i*xImag) * (logZMag + i*zArg)
+        const realPart = xReal * logZMag - xImag * zArg;
+        const imagPart = xReal * zArg + xImag * logZMag;
+        
+        // exp(x * ln(z))
+        const expReal = Math.exp(realPart);
+        const newX = expReal * Math.cos(imagPart) + c_real;
+        const newY = expReal * Math.sin(imagPart) + c_imag;
+        
+        x = newX;
+        y = newY;
+        iteration++;
+      }
     }
 
     // Calculate smooth value for better audio mapping
     let smoothValue = iteration;
-    if (iteration < maxIterations) {
+    if (iteration < maxIterations && currentMaterial !== 'newton') {
       const logZn = Math.log(x * x + y * y) / 2;
       const nu = Math.log(logZn / Math.log(2)) / Math.log(2);
       smoothValue = iteration + 1 - nu;
@@ -268,7 +407,7 @@ export default function FractalExplorer() {
       // Play single tone
       synthRef.current.playPoint(iteration, maxIterations, normalizedX, smoothValue);
     }
-  }, [sonicEnabled, currentMaterial, cReal, cImag, maxIterations]);
+  }, [sonicEnabled, currentMaterial, cReal, cImag, zReal, zImag, xReal, xImag, maxIterations]);
 
   return (
     <div className="w-full h-screen relative bg-black overflow-hidden">

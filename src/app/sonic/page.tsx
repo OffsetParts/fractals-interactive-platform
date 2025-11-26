@@ -71,7 +71,7 @@ export default function SonicFractals() {
         let xtemp;
 
         // Mandelbrot iteration
-        while (x * x + y * y <= 4 && iteration < maxIterations) {
+        while (x * x + y * y <= 256 && iteration < maxIterations) {
           xtemp = x * x - y * y + x0;
           y = 2 * x * y + y0;
           x = xtemp;
@@ -167,7 +167,7 @@ export default function SonicFractals() {
     const orbitPoints: { x: number; y: number }[] = [];
 
     // Store all iteration points
-    while (x * x + y * y <= 4 && iteration < maxIterations) {
+    while (x * x + y * y <= 256 && iteration < maxIterations) {
       // Convert complex point to screen coordinates
       const screenX = ((x - viewport.x) * height * viewport.zoom) + width / 2;
       const screenY = ((y - viewport.y) * height * viewport.zoom) + height / 2;
@@ -286,7 +286,7 @@ export default function SonicFractals() {
     let iteration = 0;
     let xtemp;
 
-    while (x * x + y * y <= 4 && iteration < maxIterations) {
+    while (x * x + y * y <= 256 && iteration < maxIterations) {
       xtemp = x * x - y * y + x0;
       y = 2 * x * y + y0;
       x = xtemp;

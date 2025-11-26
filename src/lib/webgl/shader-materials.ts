@@ -211,17 +211,17 @@ void main() {
             vec2 z = uZ0;
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
-                if (dot(z, z) >= 100000.0) {result = i; break;}
+                if (dot(z, z) >= 256.0) {result = i; break;}
                 z = cpow(z, uX) + c;  // Use complex exponentiation with uX
             }
 
             // Smooth gradient coloring via palette with exponent-aware smoothing
-            if (dot(z, z) >= 4.0) {
+            if (dot(z, z) >= 256.0) {
                 // Calculate the exponent magnitude for smooth transition
                 float expMag = length(uX);
                 
                 // Standard smoothing (works well for |x| > 1)
-                float smoothVal = float(result) - log2(log2(length(z)));
+                float smoothVal = float(result) - log2(log(length(z)) / log(256.0));
                 
                 // No smoothing (better for |x| near 1)
                 float noSmoothVal = float(result);
@@ -328,7 +328,7 @@ void main() {
                 if (dot(z,z) > 4.0) { result = i; break; }
             }
             if (dot(z,z) >= 4.0) {
-                float nu = float(result) - log2(log2(length(z)));
+                float nu = float(result) - log2(log(length(z)) / log(256.0));
                 float t = clamp(nu / max(float(uIters), 1.0), 0.0, 1.0);
                 gl_FragColor.rgb += vec3(t);
             }
@@ -370,12 +370,12 @@ void main() {
             vec2 z = vec2(0.0, 0.0);
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
-                if (dot(z, z) >= 100000.0) {result = i; break;}
+                if (dot(z, z) >= 256.0) {result = i; break;}
                 z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
             }
 
-            if (dot(z, z) >= 4.0) {
-                float nu = float(result) - log2(log2(length(z)));
+            if (dot(z, z) >= 256.0) {
+                float nu = float(result) - log2(log(length(z)) / log(256.0));
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
                 gl_FragColor.rgb += samplePalette(t);
             }
@@ -634,13 +634,13 @@ void main() {
             vec2 z = vec2(0.0, 0.0);
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
-                if (dot(z, z) >= 100000.0) {result = i; break;}
+                if (dot(z, z) >= 256.0) {result = i; break;}
                 z = abs(z);
                 z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
             }
 
-            if (dot(z, z) >= 4.0) {
-                float nu = float(result) - log2(log2(length(z)));
+            if (dot(z, z) >= 256.0) {
+                float nu = float(result) - log2(log(length(z)) / log(256.0));
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
                 gl_FragColor.rgb += paletteColor(t);
             }
@@ -676,13 +676,13 @@ void main() {
             vec2 z = vec2(0.0, 0.0);
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
-                if (dot(z, z) >= 100000.0) {result = i; break;}
+                if (dot(z, z) >= 256.0) {result = i; break;}
                 z.y = abs(z.y);
                 z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
             }
 
-            if (dot(z, z) >= 4.0) {
-                float nu = float(result) - log2(log2(length(z)));
+            if (dot(z, z) >= 256.0) {
+                float nu = float(result) - log2(log(length(z)) / log(256.0));
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
                 gl_FragColor.rgb += paletteColor(t);
             }
@@ -717,12 +717,12 @@ void main() {
             vec2 z = vec2(0.0, 0.0);
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
-                if (dot(z, z) >= 100000.0) {result = i; break;}
+                if (dot(z, z) >= 256.0) {result = i; break;}
                 z = abs(z);
                 z = cmul(cmul(z, z), z) + c;  
             }
 
-            if (dot(z, z) >= 4.0) {
+            if (dot(z, z) >= 256.0) {
                 float nu = float(result) - (log(log(length(z))) / log(3.0));
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
                 gl_FragColor.rgb += paletteColor(t);
@@ -757,14 +757,14 @@ void main() {
             vec2 c = uC; // Julia set uses constant c from sliders
             for (int i = 1; i <= MAX_ITERS; i++) {
                 if (i > uIters) { result = i; break; }
-                if (dot(z, z) >= 100000.0) {result = i; break;}
+                if (dot(z, z) >= 256.0) {result = i; break;}
                 z = cpow(z, uX) + c;  // Use complex exponentiation
             }
 
-            if (dot(z, z) >= 4.0) {
+            if (dot(z, z) >= 256.0) {
                 // Exponent-aware smoothing for better rendering at low exponents
                 float expMag = length(uX);
-                float smoothVal = float(result) - log2(log2(length(z)));
+                float smoothVal = float(result) - log2(log(length(z)) / log(256.0));
                 float noSmoothVal = float(result);
                 float blendFactor = smoothstep(0.8, 1.5, expMag);
                 float nu = mix(noSmoothVal, smoothVal, blendFactor);
@@ -829,7 +829,7 @@ void main() {
 			float distance = 0.5 * sqrt(dot(z,z) / dot(dz,dz)) * log(dot(z,z));
 			if (broke < 0.5) distance = 0.0;
 			
-            if (dot(z, z) >= 4.0) {
+            if (dot(z, z) >= 256.0) {
                 float t = clamp(pow(4.0 * distance, 0.03), 0.0, 1.0);
                 gl_FragColor.rgb += paletteColor(t);
 			}
@@ -906,13 +906,13 @@ void main() {
             vec2 z = vec2(0.0, 0.0);
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
-                if (dot(z, z) >= 100000.0) {result = i; break;}
+                if (dot(z, z) >= 256.0) {result = i; break;}
                 // Conjugate: z̄² = (x - iy)² = x² - y² - 2ixy
                 z = vec2(z.x * z.x - z.y * z.y, -2.0 * z.x * z.y) + c;  
             }
 
-            if (dot(z, z) >= 4.0) {
-                float nu = float(result) - log2(log2(length(z)));
+            if (dot(z, z) >= 256.0) {
+                float nu = float(result) - log2(log(length(z)) / log(256.0));
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
                 gl_FragColor.rgb += paletteColor(t);
             }
