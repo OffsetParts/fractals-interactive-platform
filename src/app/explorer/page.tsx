@@ -8,6 +8,7 @@ import { ParameterControls } from '@/components/fractals/parameter-controls';
 import { AnimationControls } from '@/components/fractals/animation-controls';
 import { MaterialKey } from '@/lib/webgl/shader-materials';
 import { ALL_PALETTES, DEFAULT_PALETTE, PaletteName } from '@/lib/utils/palettes';
+import { FractalSynth } from '@/lib/audio/fractal-synth';
 
 interface FractalViewport {
   x: number;
@@ -71,6 +72,11 @@ export default function FractalExplorer() {
   const [animationSpeed, setAnimationSpeed] = useState<number>(1.0);
   const animationFrameRef = useRef<number>(0);
 
+  // Sonic/Audio state
+  const [sonicEnabled, setSonicEnabled] = useState<boolean>(false);
+  const [sonicVolume, setSonicVolume] = useState<number>(0.3);
+  const synthRef = useRef<FractalSynth | null>(null);
+
   // Initialize window size on mount
   useEffect(() => {
     const updateSize = () => {
@@ -84,6 +90,21 @@ export default function FractalExplorer() {
     window.addEventListener('resize', updateSize);
     return () => window.removeEventListener('resize', updateSize);
   }, []);
+
+  // Initialize audio synth
+  useEffect(() => {
+    synthRef.current = new FractalSynth();
+    return () => {
+      synthRef.current?.destroy();
+    };
+  }, []);
+
+  // Update synth volume when changed
+  useEffect(() => {
+    if (synthRef.current) {
+      synthRef.current.setVolume(sonicVolume);
+    }
+  }, [sonicVolume]);
 
   // Keyboard shortcuts for toggling panels
   useEffect(() => {
@@ -204,6 +225,51 @@ export default function FractalExplorer() {
     };
   }, [isAnimating, animationSpeed]);
 
+  // Handle canvas clicks for sonic playback
+  const handleCanvasClick = useCallback((normalizedX: number, normalizedY: number, complexX: number, complexY: number) => {
+    if (!sonicEnabled || !synthRef.current) return;
+
+    // Calculate Mandelbrot iterations for the clicked point
+    let x = 0;
+    let y = 0;
+    let iteration = 0;
+
+    // Use c from click position for Mandelbrot, or use sliders for Julia
+    const c_real = currentMaterial === 'julia' ? cReal : complexX;
+    const c_imag = currentMaterial === 'julia' ? cImag : complexY;
+
+    // For Julia set, use click as starting z position
+    if (currentMaterial === 'julia') {
+      x = complexX;
+      y = complexY;
+    }
+
+    // Mandelbrot/Julia iteration
+    while (x * x + y * y <= 4 && iteration < maxIterations) {
+      const xtemp = x * x - y * y + c_real;
+      y = 2 * x * y + c_imag;
+      x = xtemp;
+      iteration++;
+    }
+
+    // Calculate smooth value for better audio mapping
+    let smoothValue = iteration;
+    if (iteration < maxIterations) {
+      const logZn = Math.log(x * x + y * y) / 2;
+      const nu = Math.log(logZn / Math.log(2)) / Math.log(2);
+      smoothValue = iteration + 1 - nu;
+    }
+
+    // Play sound based on escape time
+    if (iteration === maxIterations || iteration > maxIterations * 0.95) {
+      // Very stable - play chord
+      synthRef.current.playChord(iteration, maxIterations, normalizedX);
+    } else {
+      // Play single tone
+      synthRef.current.playPoint(iteration, maxIterations, normalizedX, smoothValue);
+    }
+  }, [sonicEnabled, currentMaterial, cReal, cImag, maxIterations]);
+
   return (
     <div className="w-full h-screen relative bg-black overflow-hidden">
       {/* Full-screen THREE.js Canvas */}
@@ -230,6 +296,7 @@ export default function FractalExplorer() {
           cImag={cImag}
           xReal={xReal}
           xImag={xImag}
+          onClick={handleCanvasClick}
           onZoom={(zoomLevel) => {
             setViewport((prev) => ({ ...prev, zoom: zoomLevel }));
             handleFrameUpdate();
@@ -432,6 +499,42 @@ export default function FractalExplorer() {
             <span className="text-sm">📊</span>
           </button>
         )}
+      </div>
+
+      {/* Sonic Controls - Top Right */}
+      <div className="absolute top-4 right-[340px] z-10">
+        <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-3 pointer-events-auto">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSonicEnabled(!sonicEnabled)}
+              className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
+                sonicEnabled
+                  ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              }`}
+              title="Toggle Sonic Mode"
+            >
+              {sonicEnabled ? '🎵 Sonic ON' : '🔇 Sonic OFF'}
+            </button>
+            {sonicEnabled && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 text-xs">Vol</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={sonicVolume}
+                  onChange={(e) => setSonicVolume(parseFloat(e.target.value))}
+                  className="w-20 accent-purple-500"
+                />
+                <span className="text-white text-xs font-mono w-8">
+                  {Math.round(sonicVolume * 100)}%
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Keyboard Shortcuts Help - Bottom Left */}

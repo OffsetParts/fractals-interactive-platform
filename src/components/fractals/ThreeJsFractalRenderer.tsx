@@ -13,6 +13,7 @@ export interface ThreeJsFractalRendererProps {
   initialViewport?: { x: number; y: number; zoom: number };
   onZoom?: (zoomLevel: number) => void;
   onPan?: (offsetX: number, offsetY: number) => void;
+  onClick?: (x: number, y: number, complexX: number, complexY: number) => void; // For sonic playback
   iterations?: number;
   paletteName?: PaletteName;
   autoAdjustIterations?: boolean;
@@ -47,6 +48,7 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
   initialViewport,
   onZoom,
   onPan,
+  onClick,
   iterations = 150,
   paletteName = DEFAULT_PALETTE,
   autoAdjustIterations = true,
@@ -413,6 +415,31 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
     }
   }, []);
 
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    if (!onClick || !canvasRef.current) return;
+
+    // Only trigger click if not dragging
+    const clickThreshold = 5; // pixels
+    const deltaX = Math.abs(e.clientX - dragStateRef.current.dragStart.x);
+    const deltaY = Math.abs(e.clientY - dragStateRef.current.dragStart.y);
+    
+    if (deltaX > clickThreshold || deltaY > clickThreshold) return;
+
+    const rect = canvasRef.current.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+
+    // Convert pixel to complex plane coordinates
+    const normalizedX = px / rect.width;
+    const normalizedY = py / rect.height;
+    
+    const aspectRatio = rect.width / rect.height;
+    const complexX = ((normalizedX - 0.5) * 2 * aspectRatio * viewStateRef.current.scale) + viewStateRef.current.offset.x;
+    const complexY = ((0.5 - normalizedY) * 2 * viewStateRef.current.scale) + viewStateRef.current.offset.y;
+
+    onClick(normalizedX, normalizedY, complexX, complexY);
+  }, [onClick]);
+
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!dragStateRef.current.isDragging || !canvasRef.current || !materialRef.current) return;
 
@@ -517,6 +544,7 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onClick={handleClick}
       onWheel={handleWheel}
       onContextMenu={(e) => e.preventDefault()}
     >
