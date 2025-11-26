@@ -161,7 +161,7 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
     // Create and set material
     let material: THREE.RawShaderMaterial;
     if (materialKey === 'custom' && customEquation) {
-      material = createCustomMaterial(customEquation);
+      material = createCustomMaterial();
     } else {
       const materialFactory = materials[materialKey];
       material = materialFactory();
@@ -242,7 +242,7 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
     
     let newMaterial: THREE.RawShaderMaterial;
     if (materialKey === 'custom' && customEquation) {
-      newMaterial = createCustomMaterial(customEquation);
+      newMaterial = createCustomMaterial();
     } else {
       const materialFactory = materials[materialKey];
       newMaterial = materialFactory();
