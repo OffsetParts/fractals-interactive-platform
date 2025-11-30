@@ -37,10 +37,10 @@ const createDefaultUniforms = (): ShaderUniforms => ({
     offsetLeastSignificant: { value: new THREE.Vector2(0, 0) },
     palette: { value: getPaletteTexture(DEFAULT_PALETTE) },
         uIters: { value: 150 },
-        uGamma: { value: 1.15 },
+        uGamma: { value: 1.0 },
         uBandCenter: { value: 0.88 },
         uBandWidth: { value: 0.035 },
-        uBandStrength: { value: 0.85 },
+        uBandStrength: { value: 1.2 },
         uInteriorColor: { value: new THREE.Vector3(0.04, 0.09, 0.18) },
         uInteriorEnabled: { value: 1 },
         uBands: { value: 0 },
@@ -1006,8 +1006,14 @@ void main() {
             for (int i = 1; i <= MAX_ITERS; i++) {
                 if (i > uIters) { result = i; break; }
                 
-                // Simple additive iteration: z_{n+1} = z_n + c
-                z = z + c;
+                // Spiral iteration: z_{n+1} = z_n * rotation + c
+                // Create rotation matrix for spiral effect
+                float angle = 0.1; // Small rotation per iteration
+                vec2 rotated = vec2(
+                    z.x * cos(angle) - z.y * sin(angle),
+                    z.x * sin(angle) + z.y * cos(angle)
+                );
+                z = rotated + c;
                 
                 float dist = length(z);
                 minDist = min(minDist, dist);

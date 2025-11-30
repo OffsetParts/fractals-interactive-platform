@@ -17,15 +17,92 @@ interface FractalViewport {
 }
 
 // Fractal presets with parameterization
-const PRESET_EQUATIONS: Record<string, { label: string; defaultIterations: number; materialKey: MaterialKey; viewport?: FractalViewport }> = {
-  mandelbrot: { label: 'Mandelbrot', defaultIterations: 50, materialKey: 'normal' },
-  burningship: { label: 'Burning Ship', defaultIterations: 50, materialKey: 'burningShip' },
-  burningship_z3: { label: 'Burning Ship z³', defaultIterations: 50, materialKey: 'burningShipZ3' },
-  burningship_semi: { label: 'Semi Burning Ship', defaultIterations: 50, materialKey: 'semi' },
-  julia: { label: 'Julia Set', defaultIterations: 50, materialKey: 'julia' },
-  tricorn: { label: 'Tricorn (Mandelbar)', defaultIterations: 50, materialKey: 'tricorn' },
-  newton: { label: "Newton's Fractal", defaultIterations: 50, materialKey: 'newton' },
-  spiral: { label: 'Spiral/Galaxy (z + c)', defaultIterations: 50, materialKey: 'spiral', viewport: { x: 0, y: 0, zoom: 1.5 } }
+interface PresetConfig {
+  label: string;
+  equation: string;
+  defaultIterations: number;
+  materialKey: MaterialKey;
+  viewport?: FractalViewport;
+  showZ?: boolean;
+  showC?: boolean;
+  showX?: boolean;
+  [key: string]: unknown;
+}
+
+const PRESET_EQUATIONS: Record<string, PresetConfig> = {
+  mandelbrot: { 
+    label: 'Mandelbrot', 
+    equation: 'z_{n+1} = z_n^x + c',
+    defaultIterations: 75, 
+    materialKey: 'normal',
+    showZ: false,
+    showC: false,
+    showX: true
+  },
+  burningship: { 
+    label: 'Burning Ship', 
+    equation: 'z_{n+1} = (|Re(z_n)| + i|Im(z_n)|)^2 + c',
+    defaultIterations: 75, 
+    materialKey: 'burningShip',
+    showZ: false,
+    showC: false,
+    showX: false
+  },
+  burningship_z3: { 
+    label: 'Burning Ship z³', 
+    equation: 'z_{n+1} = (|Re(z_n)| + i|Im(z_n)|)^3 + c',
+    defaultIterations: 75, 
+    materialKey: 'burningShipZ3',
+    showZ: false,
+    showC: false,
+    showX: false
+  },
+  burningship_semi: { 
+    label: 'Semi Burning Ship', 
+    equation: 'z_{n+1} = (|Re(z_n)| + iIm(z_n))^2 + c',
+    defaultIterations: 75, 
+    materialKey: 'semi',
+    showZ: false,
+    showC: false,
+    showX: false
+  },
+  julia: { 
+    label: 'Julia Set', 
+    equation: 'z_{n+1} = z_n^x + c',
+    defaultIterations: 75, 
+    materialKey: 'julia',
+    showZ: false,
+    showC: true,
+    showX: true
+  },
+  tricorn: { 
+    label: 'Tricorn (Mandelbar)', 
+    equation: 'z_{n+1} = conj(z_n)^2 + c',
+    defaultIterations: 75, 
+    materialKey: 'tricorn',
+    showZ: false,
+    showC: false,
+    showX: false
+  },
+  newton: { 
+    label: "Newton's Fractal", 
+    equation: 'z_{n+1} = z_n - f(z_n)/f\'(z_n)',
+    defaultIterations: 75, 
+    materialKey: 'newton',
+    showZ: false,
+    showC: false,
+    showX: false
+  },
+  spiral: { 
+    label: 'Spiral/Galaxy', 
+    equation: 'z_{n+1} = z_n · e^{ic} + c',
+    defaultIterations: 75, 
+    materialKey: 'spiral', 
+    viewport: { x: 0, y: 0, zoom: 1.5 },
+    showZ: false,
+    showC: true,
+    showX: false
+  }
 };
 
 export default function FractalExplorer() {
@@ -43,12 +120,12 @@ export default function FractalExplorer() {
   const [xImag, setXImag] = useState<number>(0.0);
 
   // Core state
-  const [maxIterations, setMaxIterations] = useState<number>(50);
+  const [maxIterations, setMaxIterations] = useState<number>(75);
   const [palette, setPalette] = useState<PaletteName>(DEFAULT_PALETTE);
   const [autoIters, setAutoIters] = useState<boolean>(false);
   const [autoTone, setAutoTone] = useState<boolean>(false);
-  const [gamma, setGamma] = useState<number>(1.15);
-  const [bandStrength, setBandStrength] = useState<number>(0.85);
+  const [gamma, setGamma] = useState<number>(0.35); // Low gamma for thick borders
+  const [bandStrength, setBandStrength] = useState<number>(1.2); // Higher band strength for visible borders
   const [bandCenter, setBandCenter] = useState<number>(0.88);
   const [bandWidth, setBandWidth] = useState<number>(0.035);
   const [interiorEnabled, setInteriorEnabled] = useState<boolean>(false);
@@ -65,6 +142,8 @@ export default function FractalExplorer() {
   const [showParameters, setShowParameters] = useState<boolean>(true);
   const [showControls, setShowControls] = useState<boolean>(true);
   const [showStats, setShowStats] = useState<boolean>(true);
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
+  const [hideAllUI, setHideAllUI] = useState<boolean>(false);
   const fpsCounterRef = useRef<{ frameCount: number; lastTime: number }>({ frameCount: 0, lastTime: Date.now() });
 
   // Animation state
@@ -122,7 +201,18 @@ export default function FractalExplorer() {
           setShowControls((prev) => !prev);
           break;
         case 's':
-          setShowStats((prev) => !prev);
+          if (e.shiftKey) {
+            // Shift+S: Take screenshot
+            handleScreenshot();
+          } else {
+            setShowStats((prev) => !prev);
+          }
+          break;
+        case 'h':
+          setHideAllUI((prev) => !prev);
+          break;
+        case 'a':
+          setShowAdvanced((prev) => !prev);
           break;
         case 'h':
           // Hide all panels
@@ -151,8 +241,11 @@ export default function FractalExplorer() {
     // Track current preset
     setCurrentPresetKey(presetKey);
 
-    // Set material and iterations
-    setCurrentMaterial(preset.materialKey);
+    // Only change material if different to avoid reinitialization (which breaks sonic)
+    if (preset.materialKey !== currentMaterial) {
+      setCurrentMaterial(preset.materialKey);
+    }
+    
     setMaxIterations(preset.defaultIterations);
 
     // Use custom viewport if provided, otherwise use default
@@ -225,6 +318,23 @@ export default function FractalExplorer() {
     };
   }, [isAnimating, animationSpeed]);
 
+  // Screenshot handler
+  const handleScreenshot = useCallback(() => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.download = `fractal-${currentPresetKey}-${timestamp}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }, [currentPresetKey]);
+
   // Handle canvas clicks for sonic playback
   const handleCanvasClick = useCallback((normalizedX: number, normalizedY: number, complexX: number, complexY: number) => {
     if (!sonicEnabled || !synthRef.current) return;
@@ -270,7 +380,7 @@ export default function FractalExplorer() {
         break;
 
       case 'spiral':
-        // Spiral: c from click, z starts at 0
+        // Spiral: c from click, z starts at 0, with rotation
         x = 0;
         y = 0;
         c_real = complexX;
@@ -360,10 +470,13 @@ export default function FractalExplorer() {
         iteration = i + 1;
       }
     } else if (currentMaterial === 'spiral') {
-      // Spiral: z = z + c (additive instead of multiplicative)
+      // Spiral: z = rotate(z) + c
       while (x * x + y * y <= 100 && iteration < maxIterations) {
-        x = x + c_real;
-        y = y + c_imag;
+        const angle = 0.1;
+        const rotX = x * Math.cos(angle) - y * Math.sin(angle);
+        const rotY = x * Math.sin(angle) + y * Math.cos(angle);
+        x = rotX + c_real;
+        y = rotY + c_imag;
         iteration++;
       }
     } else {
@@ -465,63 +578,79 @@ export default function FractalExplorer() {
       </div>
 
       {/* Floating Parameter Panel - Bottom Center */}
-      <div
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 transition-transform duration-300"
-        style={{ transform: showParameters ? 'translate(-50%, 0)' : 'translate(-50%, 150%)' }}
-      >
-        <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-4 min-w-[600px] max-w-[700px] pointer-events-auto">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Complex Parameters</h2>
-            <button
-              onClick={() => setShowParameters(false)}
-              className="text-gray-500 hover:text-gray-300 transition text-xs"
-            >
-              ✕ Hide
-            </button>
-          </div>
-          
-          {/* Equation Display */}
-          <div className="mb-3 p-3 bg-black/40 border border-cyan-500/20 rounded-lg">
-            <div className="font-mono text-sm text-cyan-300 text-center">
-              z<sub>n+1</sub> = z<sub>n</sub><sup>x</sup> + c
+      {!hideAllUI && (
+        <div
+          className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 transition-transform duration-300"
+          style={{ transform: showParameters ? 'translate(-50%, 0)' : 'translate(-50%, 150%)' }}
+        >
+          <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-4 min-w-[700px] max-w-[900px] pointer-events-auto">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Parameters</h2>
+              <button
+                onClick={() => setShowParameters(false)}
+                className="text-gray-500 hover:text-gray-300 transition text-xs"
+              >
+                ✕ Hide
+              </button>
             </div>
-            <div className="font-mono text-xs text-gray-400 text-center mt-1">
-              where x = {xReal.toFixed(2)} {xImag >= 0 ? '+' : ''} {xImag.toFixed(2)}i
+            
+            {/* Equation Display */}
+            <div className="mb-3 p-3 bg-black/40 border border-cyan-500/20 rounded-lg">
+              <div className="font-mono text-sm text-cyan-300 text-center" dangerouslySetInnerHTML={{ __html: PRESET_EQUATIONS[currentPresetKey]?.equation || 'z<sub>n+1</sub> = z<sub>n</sub><sup>x</sup> + c' }} />
+              {PRESET_EQUATIONS[currentPresetKey]?.showX && (
+                <div className="font-mono text-xs text-gray-400 text-center mt-1">
+                  where x = {xReal.toFixed(2)} {xImag >= 0 ? '+' : ''} {xImag.toFixed(2)}i
+                </div>
+              )}
+              {PRESET_EQUATIONS[currentPresetKey]?.showC && currentMaterial === 'julia' && (
+                <div className="font-mono text-xs text-gray-400 text-center mt-1">
+                  where c = {cReal.toFixed(2)} {cImag >= 0 ? '+' : ''} {cImag.toFixed(2)}i
+                </div>
+              )}
+              {PRESET_EQUATIONS[currentPresetKey]?.showC && currentMaterial === 'spiral' && (
+                <div className="font-mono text-xs text-gray-400 text-center mt-1">
+                  where c = {cReal.toFixed(2)} {cImag >= 0 ? '+' : ''} {cImag.toFixed(2)}i
+                </div>
+              )}
             </div>
-          </div>
 
-          <ParameterControls
-            z_real={zReal}
-            z_imag={zImag}
-            c_real={cReal}
-            c_imag={cImag}
-            x_real={xReal}
-            x_imag={xImag}
-            onZRealChange={setZReal}
-            onZImagChange={setZImag}
-            onCRealChange={setCReal}
-            onCImagChange={setCImag}
-            onXRealChange={setXReal}
-            onXImagChange={setXImag}
-          />
-
-          {/* Animation Controls */}
-          <div className="mt-3">
-            <AnimationControls
-              isPlaying={isAnimating}
-              onTogglePlay={() => setIsAnimating(!isAnimating)}
-              speed={animationSpeed}
-              onSpeedChange={setAnimationSpeed}
+            <ParameterControls
+              z_real={zReal}
+              z_imag={zImag}
+              c_real={cReal}
+              c_imag={cImag}
+              x_real={xReal}
+              x_imag={xImag}
+              onZRealChange={setZReal}
+              onZImagChange={setZImag}
+              onCRealChange={setCReal}
+              onCImagChange={setCImag}
+              onXRealChange={setXReal}
+              onXImagChange={setXImag}
+              showZ={PRESET_EQUATIONS[currentPresetKey]?.showZ ?? false}
+              showC={PRESET_EQUATIONS[currentPresetKey]?.showC ?? false}
+              showX={PRESET_EQUATIONS[currentPresetKey]?.showX ?? false}
             />
+
+            {/* Animation Controls */}
+            <div className="mt-3">
+              <AnimationControls
+                isPlaying={isAnimating}
+                onTogglePlay={() => setIsAnimating(!isAnimating)}
+                speed={animationSpeed}
+                onSpeedChange={setAnimationSpeed}
+              />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Floating Controls Panel - Right Side (anchored top-right for accessibility) */}
-      <div
-        className="absolute top-4 right-4 z-10 transition-transform duration-300"
-        style={{ transform: showControls ? 'translate(0,0)' : 'translate(110%,0)' }}
-      >
+      {!hideAllUI && (
+        <div
+          className="absolute top-4 right-4 z-10 transition-transform duration-300"
+          style={{ transform: showControls ? 'translate(0,0)' : 'translate(110%,0)' }}
+        >
         <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-4 w-80 pointer-events-auto max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-gray-400 text-xs font-semibold uppercase tracking-wider">
@@ -545,6 +674,8 @@ export default function FractalExplorer() {
             palette={palette}
             palettes={ALL_PALETTES}
             onPaletteChange={(name) => setPalette(name as PaletteName)}
+            showAdvanced={showAdvanced}
+            onShowAdvancedChange={setShowAdvanced}
             autoIterations={autoIters}
             onAutoIterationsChange={(enabled) => setAutoIters(enabled)}
             autoTone={autoTone}
@@ -565,133 +696,221 @@ export default function FractalExplorer() {
             onPowerChange={setPower}
           />
         </div>
-      </div>
+        </div>
+      )}
+
+      {/* Sonic Controls in Right Panel spot when controls are visible */}
+      {!hideAllUI && showControls && (
+        <div className="absolute top-4 right-[340px] z-10">
+          <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-3 pointer-events-auto">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSonicEnabled(!sonicEnabled)}
+                className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
+                  sonicEnabled
+                    ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                    : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                }`}
+                title="Toggle Sonic Mode"
+              >
+                {sonicEnabled ? '🎵 Sonic ON' : '🔇 Sonic OFF'}
+              </button>
+              {sonicEnabled && (
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400 text-xs">Vol</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={sonicVolume}
+                    onChange={(e) => setSonicVolume(parseFloat(e.target.value))}
+                    className="w-20 accent-purple-500"
+                  />
+                  <span className="text-white text-xs font-mono w-8">
+                    {Math.round(sonicVolume * 100)}%
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Stats Panel - Bottom Right */}
-      <div
-        className="absolute bottom-4 right-4 z-10 transition-transform duration-300"
-        style={{ transform: showStats ? 'translate(0, 0)' : 'translate(0, 150%)' }}
-      >
-        <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-3 min-w-[220px] pointer-events-auto">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-gray-400 text-[10px] font-semibold uppercase tracking-wider">
-              Performance
-            </h2>
-            <button
-              onClick={() => setShowStats(false)}
-              className="text-gray-500 hover:text-gray-300 transition text-xs"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-gray-500">FPS:</span>
-              <span className="text-green-400 font-mono">{fps.toFixed(0)}</span>
+      {!hideAllUI && (
+        <div
+          className="absolute bottom-4 right-4 z-10 transition-transform duration-300"
+          style={{ transform: showStats ? 'translate(0, 0)' : 'translate(0, 150%)' }}
+        >
+          <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-3 min-w-[220px] pointer-events-auto">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-gray-400 text-[10px] font-semibold uppercase tracking-wider">
+                Performance
+              </h2>
+              <button
+                onClick={() => setShowStats(false)}
+                className="text-gray-500 hover:text-gray-300 transition text-xs"
+              >
+                ✕
+              </button>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Material:</span>
-              <span className="text-blue-400 font-mono text-[9px]">{currentMaterial}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Zoom:</span>
-              <span className="text-purple-400 font-mono text-[9px]">
-                {viewport.zoom.toFixed(2)}x
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Pos:</span>
-              <span className="text-cyan-400 font-mono text-[9px]">
-                ({viewport.x.toFixed(2)}, {viewport.y.toFixed(2)})
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Toggle Buttons - Left Side (only visible when panels are hidden) */}
-      <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex flex-col gap-2">
-        {!showParameters && (
-          <button
-            onClick={() => setShowParameters(true)}
-            className="bg-black/60 backdrop-blur-sm border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/80 transition pointer-events-auto"
-            title="Show Parameters (P)"
-          >
-            <span className="text-sm">🎛️</span>
-          </button>
-        )}
-        {!showControls && (
-          <button
-            onClick={() => setShowControls(true)}
-            className="bg-black/60 backdrop-blur-sm border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/80 transition pointer-events-auto"
-            title="Show Fractals (C)"
-          >
-            <span className="text-sm">🎨</span>
-          </button>
-        )}
-        {!showStats && (
-          <button
-            onClick={() => setShowStats(true)}
-            className="bg-black/60 backdrop-blur-sm border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/80 transition pointer-events-auto"
-            title="Show Stats (S)"
-          >
-            <span className="text-sm">📊</span>
-          </button>
-        )}
-      </div>
-
-      {/* Sonic Controls - Top Right */}
-      <div className="absolute top-4 right-[340px] z-10">
-        <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-3 pointer-events-auto">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSonicEnabled(!sonicEnabled)}
-              className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
-                sonicEnabled
-                  ? 'bg-purple-600 hover:bg-purple-700 text-white'
-                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-              }`}
-              title="Toggle Sonic Mode"
-            >
-              {sonicEnabled ? '🎵 Sonic ON' : '🔇 Sonic OFF'}
-            </button>
-            {sonicEnabled && (
-              <div className="flex items-center gap-2">
-                <span className="text-gray-400 text-xs">Vol</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={sonicVolume}
-                  onChange={(e) => setSonicVolume(parseFloat(e.target.value))}
-                  className="w-20 accent-purple-500"
-                />
-                <span className="text-white text-xs font-mono w-8">
-                  {Math.round(sonicVolume * 100)}%
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-gray-500">FPS:</span>
+                <span className="text-green-400 font-mono">{fps.toFixed(0)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Material:</span>
+                <span className="text-blue-400 font-mono text-[9px]">{currentMaterial}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Zoom:</span>
+                <span className="text-purple-400 font-mono text-[9px]">
+                  {viewport.zoom.toFixed(2)}x
                 </span>
               </div>
-            )}
+              <div className="flex justify-between">
+                <span className="text-gray-500">Pos:</span>
+                <span className="text-cyan-400 font-mono text-[9px]">
+                  ({viewport.x.toFixed(2)}, {viewport.y.toFixed(2)})
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Toggle Buttons - Left Side (only visible when panels are hidden) */}
+      {!hideAllUI && (
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex flex-col gap-2">
+          {!showParameters && (
+            <button
+              onClick={() => setShowParameters(true)}
+              className="bg-black/60 backdrop-blur-sm border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/80 transition pointer-events-auto"
+              title="Show Parameters (P)"
+            >
+              <span className="text-sm">🎛️</span>
+            </button>
+          )}
+          {!showControls && (
+            <button
+              onClick={() => setShowControls(true)}
+              className="bg-black/60 backdrop-blur-sm border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/80 transition pointer-events-auto"
+              title="Show Fractals (C)"
+            >
+              <span className="text-sm">🎨</span>
+            </button>
+          )}
+          {!showStats && (
+            <button
+              onClick={() => setShowStats(true)}
+              className="bg-black/60 backdrop-blur-sm border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/80 transition pointer-events-auto"
+              title="Show Stats (S)"
+            >
+              <span className="text-sm">📊</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Top Right Controls - Screenshot, Hide All, Sonic */}
+      {!hideAllUI && (
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+          {/* Screenshot Button */}
+          <button
+            onClick={handleScreenshot}
+            className="bg-black/70 backdrop-blur-md border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/90 transition pointer-events-auto"
+            title="Screenshot (Shift+S)"
+          >
+            <span className="text-sm">📸</span>
+          </button>
+          
+          {/* Hide All UI Button */}
+          <button
+            onClick={() => setHideAllUI(true)}
+            className="bg-black/70 backdrop-blur-md border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/90 transition pointer-events-auto"
+            title="Hide All UI (H)"
+          >
+            <span className="text-sm">👁️</span>
+          </button>
+          
+          {/* Sonic Controls - Shifts when controls panel is visible */}
+          {!showControls && (
+            <div className="bg-black/70 backdrop-blur-md border border-gray-700/50 rounded-lg shadow-2xl p-3 pointer-events-auto">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSonicEnabled(!sonicEnabled)}
+                  className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
+                    sonicEnabled
+                      ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                  }`}
+                  title="Toggle Sonic Mode"
+                >
+                  {sonicEnabled ? '🎵 Sonic ON' : '🔇 Sonic OFF'}
+                </button>
+                {sonicEnabled && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400 text-xs">Vol</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={sonicVolume}
+                      onChange={(e) => setSonicVolume(parseFloat(e.target.value))}
+                      className="w-20 accent-purple-500"
+                    />
+                    <span className="text-white text-xs font-mono w-8">
+                      {Math.round(sonicVolume * 100)}%
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Show UI Button - When hidden */}
+      {hideAllUI && (
+        <button
+          onClick={() => setHideAllUI(false)}
+          className="absolute top-4 right-4 z-20 bg-black/70 backdrop-blur-md border border-gray-700/50 p-3 rounded-lg text-white hover:bg-black/90 transition pointer-events-auto"
+          title="Show UI (H)"
+        >
+          <span className="text-sm">👁️</span>
+        </button>
+      )}
 
       {/* Keyboard Shortcuts Help - Bottom Left */}
-      <div className="absolute bottom-4 left-4 z-10 bg-black/60 backdrop-blur-sm border border-gray-700/50 rounded-lg p-3 pointer-events-auto text-xs text-gray-400">
-        <div className="font-semibold mb-2 text-white">Shortcuts</div>
-        <div className="space-y-1 font-mono text-[9px]">
-          <div>
-            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">P</kbd> Parameters
+      {!hideAllUI && (
+        <div className="absolute bottom-4 left-4 z-10 bg-black/60 backdrop-blur-sm border border-gray-700/50 rounded-lg p-3 pointer-events-auto text-xs text-gray-400">
+          <div className="font-semibold mb-2 text-white">Shortcuts</div>
+          <div className="space-y-1 font-mono text-[9px]">
+            <div>
+              <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">P</kbd> Parameters
+            </div>
+            <div>
+              <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">C</kbd> Fractals
+            </div>
+            <div>
+              <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">S</kbd> Stats
+            </div>
+            <div>
+              <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">A</kbd> Advanced
+            </div>
+            <div>
+              <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">H</kbd> Hide UI
+            </div>
+            <div>
+              <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">⇧S</kbd> Screenshot
+            </div>
+            <div>Drag: Pan | Wheel: Zoom</div>
           </div>
-          <div>
-            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">C</kbd> Fractals
-          </div>
-          <div>
-            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded">S</kbd> Stats
-          </div>
-          <div>Drag: Pan | Wheel: Zoom</div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

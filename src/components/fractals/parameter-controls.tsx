@@ -15,6 +15,9 @@ interface ParameterControlsProps {
   onCImagChange: (value: number) => void;
   onXRealChange: (value: number) => void;
   onXImagChange: (value: number) => void;
+  showZ?: boolean;
+  showC?: boolean;
+  showX?: boolean;
 }
 
 export const ParameterControls: React.FC<ParameterControlsProps> = ({
@@ -29,14 +32,20 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
   onCRealChange,
   onCImagChange,
   onXRealChange,
-  onXImagChange
+  onXImagChange,
+  showZ = true,
+  showC = true,
+  showX = true
 }) => {
+  const visibleCount = [showZ, showC, showX].filter(Boolean).length;
+  const gridCols = visibleCount === 3 ? 'grid-cols-3' : visibleCount === 2 ? 'grid-cols-2' : 'grid-cols-1';
+
   return (
     <div className="bg-linear-to-r from-purple-900/30 to-cyan-900/30 border border-purple-500/30 rounded-lg p-3">
-      {/* Three-column compact layout */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* Dynamic column layout */}
+      <div className={`grid ${gridCols} gap-4`}>
         {/* First Column: Z Parameters */}
-        <div className="space-y-2">
+        {showZ && <div className="space-y-2">
           <h3 className="text-xs font-medium text-gray-300 mb-1">Initial Z (z₀)</h3>
           <div>
             <div className="flex justify-between items-center mb-1">
@@ -45,8 +54,8 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
             </div>
             <input
               type="range"
-              min="-2"
-              max="2"
+              min="-3"
+              max="3"
               step="0.01"
               value={z_real}
               onChange={(e) => onZRealChange(parseFloat(e.target.value))}
@@ -60,18 +69,18 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
             </div>
             <input
               type="range"
-              min="-2"
-              max="2"
+              min="-3"
+              max="3"
               step="0.01"
               value={z_imag}
               onChange={(e) => onZImagChange(parseFloat(e.target.value))}
               className="w-full h-1.5 bg-gray-700 rounded cursor-pointer"
             />
           </div>
-        </div>
+        </div>}
 
         {/* Second Column: C Parameters */}
-        <div className="space-y-2">
+        {showC && <div className="space-y-2">
           <h3 className="text-xs font-medium text-gray-300 mb-1">Constant C</h3>
           <div>
             <div className="flex justify-between items-center mb-1">
@@ -80,8 +89,8 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
             </div>
             <input
               type="range"
-              min="-2"
-              max="2"
+              min="-3"
+              max="3"
               step="0.01"
               value={c_real}
               onChange={(e) => onCRealChange(parseFloat(e.target.value))}
@@ -95,18 +104,18 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
             </div>
             <input
               type="range"
-              min="-2"
-              max="2"
+              min="-3"
+              max="3"
               step="0.01"
               value={c_imag}
               onChange={(e) => onCImagChange(parseFloat(e.target.value))}
               className="w-full h-1.5 bg-gray-700 rounded cursor-pointer"
             />
           </div>
-        </div>
+        </div>}
 
         {/* Third Column: X Parameters (Exponent) */}
-        <div className="space-y-2">
+        {showX && <div className="space-y-2">
           <h3 className="text-xs font-medium text-gray-300 mb-1">Exponent X</h3>
           <div>
             <div className="flex justify-between items-center mb-1">
@@ -115,8 +124,8 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
             </div>
             <input
               type="range"
-              min="-4"
-              max="4"
+              min="-6"
+              max="6"
               step="0.01"
               value={x_real}
               onChange={(e) => onXRealChange(parseFloat(e.target.value))}
@@ -130,15 +139,15 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
             </div>
             <input
               type="range"
-              min="-4"
-              max="4"
+              min="-6"
+              max="6"
               step="0.01"
               value={x_imag}
               onChange={(e) => onXImagChange(parseFloat(e.target.value))}
               className="w-full h-1.5 bg-gray-700 rounded cursor-pointer"
             />
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );

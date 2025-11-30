@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 
 interface CompactControlsProps {
-  presets: Record<string, { label: string; defaultIterations: number; [key: string]: unknown }>;
+  presets: Record<string, { label: string; defaultIterations: number; equation?: string; materialKey?: string; viewport?: unknown; showZ?: boolean; showC?: boolean; showX?: boolean; [key: string]: unknown }>;
   onPresetSelect: (presetKey: string) => void;
   maxIterations: number;
   onIterationsChange: (value: number) => void;
@@ -13,6 +13,8 @@ interface CompactControlsProps {
   palette: string;
   palettes: string[];
   onPaletteChange: (name: string) => void;
+  showAdvanced?: boolean;
+  onShowAdvancedChange?: (show: boolean) => void;
   autoIterations?: boolean;
   onAutoIterationsChange?: (enabled: boolean) => void;
   autoTone?: boolean;
@@ -44,11 +46,13 @@ export function CompactControls({
   palette,
   palettes,
   onPaletteChange,
-  autoIterations = true,
+  showAdvanced = false,
+  onShowAdvancedChange,
+  autoIterations = false,
   onAutoIterationsChange,
-  autoTone = true,
+  autoTone = false,
   onAutoToneChange,
-  gamma = 1.15,
+  gamma = 0.85,
   onGammaChange,
   bandStrength = 0.85,
   onBandStrengthChange,
@@ -110,55 +114,69 @@ export function CompactControls({
         <input
           type="range"
           min="10"
-          max="1000"
-          step="10"
+          max="512"
+          step="5"
           value={maxIterations}
           onChange={(e) => onIterationsChange(parseInt(e.target.value))}
           className="w-full h-2 bg-gray-700 rounded cursor-pointer"
         />
       </div>
 
-      {/* Tone Controls */}
-      <div className="space-y-3">
-        <div>
-          <label className="flex items-center text-sm text-gray-300">
-            <input type="checkbox" className="mr-2" checked={autoTone} onChange={(e) => onAutoToneChange?.(e.target.checked)} />
-            Auto Tone (zoom adaptive)
-          </label>
-        </div>
-        {!autoTone && (
-          <>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Gamma: {gamma.toFixed(2)}</label>
-              <input type="range" min="0.6" max="2.2" step="0.01" value={gamma} onChange={(e) => onGammaChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Band Strength: {bandStrength.toFixed(2)}</label>
-              <input type="range" min="0.0" max="1.5" step="0.01" value={bandStrength} onChange={(e) => onBandStrengthChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
-            </div>
-          </>
-        )}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Band Center: {bandCenter.toFixed(2)}</label>
-            <input type="range" min="0.0" max="1.0" step="0.005" value={bandCenter} onChange={(e) => onBandCenterChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Band Width: {bandWidth.toFixed(3)}</label>
-            <input type="range" min="0.005" max="0.2" step="0.001" value={bandWidth} onChange={(e) => onBandWidthChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3 items-center">
-          <label className="flex items-center text-sm text-gray-300">
-            <input type="checkbox" className="mr-2" checked={interiorEnabled} onChange={(e) => onInteriorEnabledChange?.(e.target.checked)} />
-            Complex Plane Grid
-          </label>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Bands: {bands}</label>
-            <input type="range" min="0" max="64" step="1" value={bands} onChange={(e) => onBandsChange?.(parseInt(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
-          </div>
-        </div>
+      {/* Complex Plane Grid - Always Visible */}
+      <div>
+        <label className="flex items-center text-sm text-gray-300">
+          <input type="checkbox" className="mr-2" checked={interiorEnabled} onChange={(e) => onInteriorEnabledChange?.(e.target.checked)} />
+          Complex Plane Grid
+        </label>
       </div>
+
+      {/* Advanced Controls Toggle */}
+      <button
+        onClick={() => onShowAdvancedChange?.(!showAdvanced)}
+        className="w-full py-2 px-3 bg-gray-700/50 hover:bg-gray-600/50 text-white text-sm rounded transition"
+      >
+        {showAdvanced ? '▼ Hide Advanced' : '► Show Advanced'}
+      </button>
+
+      {/* Advanced Controls Section */}
+      {showAdvanced && (
+        <div className="space-y-3 pt-2 border-t border-gray-700">
+          <div>
+            <label className="flex items-center text-sm text-gray-300">
+              <input type="checkbox" className="mr-2" checked={autoTone} onChange={(e) => onAutoToneChange?.(e.target.checked)} />
+              Auto Tone (zoom adaptive)
+            </label>
+          </div>
+          {!autoTone && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Gamma: {gamma.toFixed(2)}</label>
+                <input type="range" min="0.1" max="3.0" step="0.01" value={gamma} onChange={(e) => onGammaChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Band Strength: {bandStrength.toFixed(2)}</label>
+                <input type="range" min="0.0" max="3.0" step="0.01" value={bandStrength} onChange={(e) => onBandStrengthChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+              </div>
+            </>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Band Center: {bandCenter.toFixed(2)}</label>
+              <input type="range" min="0.0" max="1.0" step="0.005" value={bandCenter} onChange={(e) => onBandCenterChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Band Width: {bandWidth.toFixed(3)}</label>
+              <input type="range" min="0.005" max="0.2" step="0.001" value={bandWidth} onChange={(e) => onBandWidthChange?.(parseFloat(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 items-center">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Bands: {bands}</label>
+              <input type="range" min="0" max="64" step="1" value={bands} onChange={(e) => onBandsChange?.(parseInt(e.target.value))} className="w-full h-2 bg-gray-700 rounded" />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Palette Selector */}
       <div>
