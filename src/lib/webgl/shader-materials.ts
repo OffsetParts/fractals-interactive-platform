@@ -186,6 +186,12 @@ vec2 carg(vec2 z){ return vec2(atan(z.y, z.x), 0.0); }
 // Componentwise absolute (Burning Ship style)
 vec2 cabs(vec2 z){ return vec2(abs(z.x), abs(z.y)); }
 
+// Smooth escape time coloring
+float smoothEscape(int iter, vec2 z) {
+    float nu = float(iter) - log2(log(length(z)) / log(256.0));
+    return nu / float(uIters);
+}
+
 `;
 
 // Create custom Mandelbrot material with complex exponent control via uX uniform
@@ -383,6 +389,9 @@ void main() {
     }
 
     gl_FragColor.rgb /= aa * aa;
+    
+    // Apply complex plane grid overlay
+    gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
 }`
   });
 };
@@ -616,7 +625,7 @@ export const createBurningShipMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-        fragmentShader: `// Burning ship fractal${fragmentShaderTopShared}
+        fragmentShader: `// Burning ship fractal with parameterized exponent${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 
 void main() {
@@ -631,18 +640,21 @@ void main() {
             c.y = -c.y;
 
             int result = 0;
-            vec2 z = vec2(0.0, 0.0);
+            vec2 z = uZ0; // Initial z from sliders
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 256.0) {result = i; break;}
-                z = abs(z);
-                z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
+                z = cabs(z); // |Re(z)| + i|Im(z)|
+                z = cpow(z, uX) + c; // z^x + c with parameterized exponent
             }
 
             if (dot(z, z) >= 256.0) {
-                float nu = float(result) - log2(log(length(z)) / log(256.0));
+                float logBase = max(abs(uX.x), 2.0);
+                float nu = float(result) - log(log(length(z)) / log(256.0)) / log(logBase);
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
-                gl_FragColor.rgb += paletteColor(t);
+                gl_FragColor.rgb += samplePalette(t);
+            } else if (uInteriorEnabled == 1) {
+                gl_FragColor.rgb += uInteriorColor;
             }
         }
     }
@@ -652,13 +664,12 @@ void main() {
   });
 };
 
-// Semi Burning Ship (only imaginary part absolute)
+// Semi Burning Ship (only real part absolute) with parameterized exponent
 export const createSemiBurningShipMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-        fragmentShader: `// Burning ship fractal, but only the imaginary part of
-// the complex number is made absolute${fragmentShaderTopShared}
+        fragmentShader: `// Semi Burning Ship - only real part is absolute${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 
 void main() {
@@ -673,18 +684,21 @@ void main() {
             c.y = -c.y;
 
             int result = 0;
-            vec2 z = vec2(0.0, 0.0);
+            vec2 z = uZ0; // Initial z from sliders
             for (int i = 1; i <= MAX_ITERS; i++) {  
                 if (i > uIters) { result = i; break; }
                 if (dot(z, z) >= 256.0) {result = i; break;}
-                z.y = abs(z.y);
-                z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;  
+                z.x = abs(z.x); // Only real part absolute
+                z = cpow(z, uX) + c; // z^x + c with parameterized exponent
             }
 
             if (dot(z, z) >= 256.0) {
-                float nu = float(result) - log2(log(length(z)) / log(256.0));
+                float logBase = max(abs(uX.x), 2.0);
+                float nu = float(result) - log(log(length(z)) / log(256.0)) / log(logBase);
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
-                gl_FragColor.rgb += paletteColor(t);
+                gl_FragColor.rgb += samplePalette(t);
+            } else if (uInteriorEnabled == 1) {
+                gl_FragColor.rgb += uInteriorColor;
             }
         }
     }
@@ -898,6 +912,7 @@ void main() {
 
 	const float aa = float(ANTIALIAS_LEVEL);
 	vec2 cellSize = scale / resolution;
+	float insideAccum = 0.0;
 	for (float y = 0.0; y < 1.0; y += 1.0 / aa) {
 		for (float x = 0.0; x < 1.0; x += 1.0 / aa) {
             vec2 c = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y);
@@ -914,12 +929,18 @@ void main() {
             if (dot(z, z) >= 256.0) {
                 float nu = float(result) - log2(log(length(z)) / log(256.0));
                 float t = clamp(nu / float(uIters), 0.0, 1.0);
-                gl_FragColor.rgb += paletteColor(t);
+                gl_FragColor.rgb += samplePalette(t);
+            } else {
+                insideAccum += 1.0;
             }
         }
     }
 
-    gl_FragColor.rgb /= aa * aa;
+    float totalSamples = aa * aa;
+    gl_FragColor.rgb /= totalSamples;
+    
+    // Apply complex plane grid overlay
+    gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
 }`
   });
 };
@@ -977,16 +998,20 @@ void main() {
     }
 
     gl_FragColor.rgb /= aa * aa;
+    
+    // Apply complex plane grid overlay
+    gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
 }`
   });
 };
 
-// Spiral/Galaxy fractal: z_{n+1} = z_n + c (simple additive iteration)
-export const createSpiralMaterial = (): THREE.RawShaderMaterial => {
+// Collatz Fractal - Creates stunning spiraling structures
+// Based on the Collatz conjecture extended to complex plane
+export const createPhoenixMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
-    fragmentShader: `// Spiral/Galaxy fractal${fragmentShaderTopShared}
+    fragmentShader: `// Collatz Spiral Fractal${fragmentShaderTopShared}
 #define ANTIALIAS_LEVEL 1
 
 void main() {
@@ -995,40 +1020,49 @@ void main() {
 
     const float aa = float(ANTIALIAS_LEVEL);
     vec2 cellSize = scale / resolution;
-    for (float y = 0.0; y < 1.0; y += 1.0 / aa) {
-        for (float x = 0.0; x < 1.0; x += 1.0 / aa) {
-            vec2 z = vec2(worldCoord.x + x * cellSize.x, worldCoord.y + y * cellSize.y);
-            vec2 c = uC; // Use c from sliders
+    for (float aay = 0.0; aay < 1.0; aay += 1.0 / aa) {
+        for (float aax = 0.0; aax < 1.0; aax += 1.0 / aa) {
+            vec2 z = vec2(worldCoord.x + aax * cellSize.x, worldCoord.y + aay * cellSize.y);
+            
+            // Collatz parameters - uC controls the spiral tightness
+            float a = 0.25 + uC.x * 0.5;  // Coefficient for the formula
+            float b = uC.y * 3.14159;      // Phase rotation
             
             int result = 0;
-            float minDist = 1e10;
+            float orbit = 0.0;
             
             for (int i = 1; i <= MAX_ITERS; i++) {
                 if (i > uIters) { result = i; break; }
                 
-                // Spiral iteration: z_{n+1} = z_n * rotation + c
-                // Create rotation matrix for spiral effect
-                float angle = 0.1; // Small rotation per iteration
-                vec2 rotated = vec2(
-                    z.x * cos(angle) - z.y * sin(angle),
-                    z.x * sin(angle) + z.y * cos(angle)
-                );
-                z = rotated + c;
+                // Smooth Collatz: f(z) = (z*cos²(πz/2) + (3z+1)/2*sin²(πz/2)) * e^(ib)
+                // Simplified smooth version that creates spirals
+                float piz = 3.14159 * z.x * a;
+                float c2 = cos(piz) * cos(piz);
+                float s2 = sin(piz) * sin(piz);
                 
-                float dist = length(z);
-                minDist = min(minDist, dist);
+                // Apply Collatz-like transformation
+                vec2 term1 = z * c2;
+                vec2 term2 = vec2((3.0 * z.x + 1.0) * 0.5, (3.0 * z.y) * 0.5) * s2;
+                z = term1 + term2;
                 
-                // Escape condition
-                if (dist > 100.0) { result = i; break; }
+                // Apply rotation for spiral effect
+                float cb = cos(b);
+                float sb = sin(b);
+                z = vec2(z.x * cb - z.y * sb, z.x * sb + z.y * cb);
+                
+                orbit += length(z);
+                
+                if (dot(z, z) > 10000.0) { result = i; break; }
             }
 
-            // Color based on minimum distance (creates spiral patterns)
-            float t = clamp(log(minDist + 1.0) / log(10.0), 0.0, 1.0);
-            
-            // Add iteration count for variation
-            if (result < uIters) {
-                float nu = float(result) / float(uIters);
-                t = mix(t, nu, 0.5);
+            float t;
+            if (result < uIters && result > 0) {
+                // Use orbit trap coloring for spiral patterns
+                float orbitAvg = orbit / float(result);
+                t = 1.0 - exp(-0.1 * orbitAvg);
+                t = mix(t, float(result) / float(uIters), 0.3);
+            } else {
+                t = 0.0;
             }
             
             gl_FragColor.rgb += samplePalette(t);
@@ -1036,8 +1070,151 @@ void main() {
     }
     
     gl_FragColor.rgb /= aa * aa;
+    gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
+}`
+  });
+};
+
+// Magnet Fractal Type I: Creates galaxy-like spiral structures
+// z_{n+1} = [(z_n^2 + c - 1) / (2z_n + c - 2)]^2
+export const createMagnetMaterial = (): THREE.RawShaderMaterial => {
+  return new THREE.RawShaderMaterial({
+    uniforms: createDefaultUniforms(),
+    vertexShader: defaultVertexShader,
+    fragmentShader: `// Magnet Fractal Type I${fragmentShaderTopShared}
+#define ANTIALIAS_LEVEL 1
+
+void main() {
+    vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+
+    const float aa = float(ANTIALIAS_LEVEL);
+    vec2 cellSize = scale / resolution;
+    for (float aay = 0.0; aay < 1.0; aay += 1.0 / aa) {
+        for (float aax = 0.0; aax < 1.0; aax += 1.0 / aa) {
+            vec2 c = vec2(worldCoord.x + aax * cellSize.x, worldCoord.y + aay * cellSize.y);
+            vec2 z = vec2(0.0, 0.0);
+            
+            int result = 0;
+            
+            for (int i = 1; i <= MAX_ITERS; i++) {
+                if (i > uIters) { result = i; break; }
+                
+                // Magnet formula: z = [(z^2 + c - 1) / (2z + c - 2)]^2
+                vec2 z2 = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y);
+                vec2 num = z2 + c - vec2(1.0, 0.0);
+                vec2 den = 2.0 * z + c - vec2(2.0, 0.0);
+                
+                vec2 frac = cdiv(num, den);
+                // Square the fraction
+                z = vec2(frac.x * frac.x - frac.y * frac.y, 2.0 * frac.x * frac.y);
+                
+                // Magnet fractals converge to fixed point 1, so check distance to 1
+                vec2 diff = z - vec2(1.0, 0.0);
+                if (dot(diff, diff) < 1e-6) { result = i; break; }
+                if (dot(z, z) > 1000.0) { result = i; break; }
+            }
+
+            float t = result < uIters 
+                ? float(result) / float(uIters)
+                : 0.0;
+            
+            gl_FragColor.rgb += samplePalette(t);
+        }
+    }
     
-    // Apply complex plane grid overlay
+    gl_FragColor.rgb /= aa * aa;
+    gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
+}`
+  });
+};
+
+// Logarithmic Spiral Fractal - True spiral patterns
+// z_{n+1} = z_n * e^(a + bi) + c where the exponential creates spiral motion
+export const createSpiralMaterial = (): THREE.RawShaderMaterial => {
+  return new THREE.RawShaderMaterial({
+    uniforms: createDefaultUniforms(),
+    vertexShader: defaultVertexShader,
+    fragmentShader: `// Logarithmic Spiral Fractal${fragmentShaderTopShared}
+#define ANTIALIAS_LEVEL 1
+
+void main() {
+    vec2 worldCoord = vec2(coord.x * (resolution.x / resolution.y), coord.y) * scale + offset;
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+
+    const float aa = float(ANTIALIAS_LEVEL);
+    vec2 cellSize = scale / resolution;
+    for (float aay = 0.0; aay < 1.0; aay += 1.0 / aa) {
+        for (float aax = 0.0; aax < 1.0; aax += 1.0 / aa) {
+            vec2 z = vec2(worldCoord.x + aax * cellSize.x, worldCoord.y + aay * cellSize.y);
+            
+            // Spiral parameters from sliders
+            // uC.x = growth rate (a), uC.y = rotation rate (b)
+            // uX.x = power for additional structure
+            float growthRate = uC.x * 0.1;
+            float rotationRate = 0.3 + uC.y * 0.5;
+            float power = uX.x;
+            
+            // Pre-compute the spiral multiplier e^(a + bi)
+            float ea = exp(growthRate);
+            float spiralReal = ea * cos(rotationRate);
+            float spiralImag = ea * sin(rotationRate);
+            
+            int result = 0;
+            float minDist = 1e10;
+            float totalAngle = 0.0;
+            
+            for (int i = 1; i <= MAX_ITERS; i++) {
+                if (i > uIters) { result = i; break; }
+                
+                // Track angle for spiral coloring
+                totalAngle += atan(z.y, z.x);
+                
+                // Apply z^power first if power != 1
+                vec2 zp = z;
+                if (abs(power - 1.0) > 0.01) {
+                    float r = length(z);
+                    if (r > 1e-10) {
+                        float theta = atan(z.y, z.x);
+                        float newR = pow(r, power);
+                        float newTheta = theta * power;
+                        zp = vec2(newR * cos(newTheta), newR * sin(newTheta));
+                    }
+                }
+                
+                // z = z^p * e^(a+bi) = z^p * (spiral rotation and growth)
+                z = vec2(
+                    zp.x * spiralReal - zp.y * spiralImag,
+                    zp.x * spiralImag + zp.y * spiralReal
+                );
+                
+                // Track minimum distance for orbit trap coloring
+                float dist = length(z);
+                minDist = min(minDist, abs(dist - 1.0)); // Distance to unit circle
+                
+                if (dist > 100.0) { result = i; break; }
+                if (dist < 0.0001) { result = i; break; } // Converging to 0
+            }
+
+            float t;
+            if (result < uIters && result > 0) {
+                // Combine multiple coloring methods for rich spiral patterns
+                float escapeTerm = float(result) / float(uIters);
+                float orbitTerm = 1.0 - exp(-2.0 * minDist);
+                float angleTerm = abs(mod(totalAngle / 6.283185, 1.0));
+                
+                // Mix all three for spiral-emphasizing coloring
+                t = mix(escapeTerm, orbitTerm, 0.4);
+                t = mix(t, angleTerm, 0.2);
+            } else {
+                t = 0.0;
+            }
+            
+            gl_FragColor.rgb += samplePalette(t);
+        }
+    }
+    
+    gl_FragColor.rgb /= aa * aa;
     gl_FragColor.rgb = applyGrid(gl_FragColor.rgb, worldCoord);
 }`
   });
@@ -1083,12 +1260,13 @@ export const materials = {
   hp: createHighPrecisionMaterial,
   burningShip: createBurningShipMaterial,
   semi: createSemiBurningShipMaterial,
-  burningShipZ3: createBurningShipZ3Material,
   julia: createJuliaMaterial,
   distance: createDistanceMaterial,
   tricorn: createTricornMaterial,
   newton: createNewtonMaterial,
   spiral: createSpiralMaterial,
+  phoenix: createPhoenixMaterial,
+  magnet: createMagnetMaterial,
   ifs: createIFSMaterial,
     rgbTest: createRGBTestMaterial,
     mono: createMandelbrotMonoMaterial,

@@ -262,6 +262,10 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
     targetItersRef.current = iterations;
     currentItersRef.current = iterations;
     maxItersCapRef.current = extractMaxItersCap((newMaterial as any).fragmentShader as string | undefined);
+    // Preserve fractal parameters (z, c, x) from props
+    if (newMaterial.uniforms.uZ0) newMaterial.uniforms.uZ0.value = new THREE.Vector2(zReal, zImag);
+    if (newMaterial.uniforms.uC) newMaterial.uniforms.uC.value = new THREE.Vector2(cReal, cImag);
+    if (newMaterial.uniforms.uX) newMaterial.uniforms.uX.value = new THREE.Vector2(xReal, xImag);
     if (newMaterial.uniforms.uPower) newMaterial.uniforms.uPower.value = power;
     if (newMaterial.uniforms.uGamma) newMaterial.uniforms.uGamma.value = toneParamsRef.current.gamma;
     if (newMaterial.uniforms.uBandStrength) newMaterial.uniforms.uBandStrength.value = toneParamsRef.current.bandStrength;
@@ -276,9 +280,11 @@ export const ThreeJsFractalRenderer: React.FC<ThreeJsFractalRendererProps> = ({
     if (oldMaterial) {
       oldMaterial.dispose();
     }
-  }, [materialKey, customEquation, paletteName, iterations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materialKey, customEquation]);
+  // Note: paletteName, iterations, and z/c/x params have their own effects - no need to recreate material
 
-  // React to palette or iterations changes without recreating material
+  // React to palette changes without recreating material
   useEffect(() => {
     if (!materialRef.current) return;
     materialRef.current.uniforms.palette.value = getPaletteTexture(paletteName);

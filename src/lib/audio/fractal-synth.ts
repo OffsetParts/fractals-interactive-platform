@@ -38,8 +38,14 @@ export class FractalSynth {
   ) {
     this.initAudio();
     if (!this.audioContext || !this.masterGain) return;
+    
+    // Guard against invalid inputs
+    if (!isFinite(iterations) || !isFinite(maxIterations) || maxIterations <= 0) return;
+    if (!isFinite(x)) x = 0.5;
+    if (smoothValue !== undefined && !isFinite(smoothValue)) smoothValue = undefined;
 
     const now = this.audioContext.currentTime;
+    if (!isFinite(now)) return;
     
     // Normalize iteration count (0 = chaotic, 1 = stable)
     const stability = iterations / maxIterations;
@@ -64,10 +70,17 @@ export class FractalSynth {
     }
 
     // Use smooth value for pitch bend if available
-    if (smoothValue !== undefined) {
+    if (smoothValue !== undefined && isFinite(smoothValue)) {
       const bendFactor = 1 + (smoothValue % 1) * 0.1; // ±10% pitch variation
       baseFreq *= bendFactor;
     }
+    
+    // Final safety check for baseFreq
+    if (!isFinite(baseFreq) || baseFreq <= 0) {
+      baseFreq = 440; // Fallback to A4
+    }
+    // Clamp to reasonable audio range
+    baseFreq = Math.max(20, Math.min(baseFreq, 4000));
 
     // Create oscillator
     const osc = this.audioContext.createOscillator();
@@ -119,12 +132,14 @@ export class FractalSynth {
     };
 
     // Add subtle frequency modulation for stable points (vibrato)
-    if (stability > 0.8) {
+    if (stability > 0.8 && isFinite(baseFreq)) {
       const lfo = this.audioContext.createOscillator();
       const lfoGain = this.audioContext.createGain();
       
+      const lfoFreq = isFinite(baseFreq * 0.02) ? baseFreq * 0.02 : 0;
+      
       lfo.frequency.setValueAtTime(5, now); // 5 Hz vibrato
-      lfoGain.gain.setValueAtTime(baseFreq * 0.02, now); // ±2% pitch variation
+      lfoGain.gain.setValueAtTime(lfoFreq, now); // ±2% pitch variation
       
       lfo.connect(lfoGain);
       lfoGain.connect(osc.frequency);
@@ -138,16 +153,22 @@ export class FractalSynth {
    * Play a chord for very stable points (deep inside the set)
    */
   playChord(iterations: number, maxIterations: number, x: number = 0.5) {
+    // Guard against invalid inputs
+    if (!isFinite(iterations) || !isFinite(maxIterations) || maxIterations <= 0) return;
+    if (!isFinite(x)) x = 0.5;
+    
     const stability = iterations / maxIterations;
     
-    if (stability < 0.95) {
+    if (!isFinite(stability) || stability < 0.95) {
       // Not stable enough for a chord
       this.playPoint(iterations, maxIterations, x);
       return;
     }
 
     // Play root, third, and fifth for harmonic chord
-    const baseFreq = 100 + stability * 50;
+    let baseFreq = 100 + stability * 50;
+    if (!isFinite(baseFreq) || baseFreq <= 0) baseFreq = 150;
+    
     const intervals = [1, 1.25, 1.5]; // Major chord intervals
     
     intervals.forEach((interval, i) => {
@@ -168,8 +189,17 @@ export class FractalSynth {
   ) {
     this.initAudio();
     if (!this.audioContext || !this.masterGain) return;
+    
+    // Guard against invalid values
+    if (!isFinite(frequency) || frequency <= 0) return;
+    if (!isFinite(duration) || duration <= 0) duration = 0.5;
+    if (!isFinite(pan)) pan = 0.5;
 
     const now = this.audioContext.currentTime;
+    if (!isFinite(now)) return;
+    
+    // Clamp frequency to safe range
+    frequency = Math.max(20, Math.min(frequency, 4000));
     
     const osc = this.audioContext.createOscillator();
     const gainNode = this.audioContext.createGain();
@@ -177,7 +207,7 @@ export class FractalSynth {
 
     osc.type = type;
     osc.frequency.setValueAtTime(frequency, now);
-    panner.pan.setValueAtTime(pan * 2 - 1, now);
+    panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan * 2 - 1)), now);
 
     // Simple envelope
     gainNode.gain.setValueAtTime(0, now);
@@ -205,6 +235,22 @@ export class FractalSynth {
     if (this.masterGain) {
       this.masterGain.gain.setValueAtTime(volume, this.audioContext!.currentTime);
     }
+  }
+
+  /**
+   * Stop all active oscillators
+   */
+  stopAll() {
+    this.activeOscillators.forEach(({ osc, gain }) => {
+      try {
+        osc.stop();
+        osc.disconnect();
+        gain.disconnect();
+      } catch (e) {
+        // Ignore errors from already stopped oscillators
+      }
+    });
+    this.activeOscillators.clear();
   }
 
   /**
