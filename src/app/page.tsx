@@ -45,8 +45,20 @@ export default function Home() {
             <Link href="/explorer" className="px-8 py-4 bg-black text-white rounded-full font-semibold hover:bg-gray-800 transition transform hover:scale-105">
               Start Exploring →
             </Link>
-            <Link href="/ai-environment" className="px-8 py-4 border-2 border-gray-300 text-gray-900 rounded-full font-semibold hover:border-gray-900 transition transform hover:scale-105">
-              AI Environment
+          </div>
+          
+          {/* Dev Testing Links */}
+          <div className="flex gap-4 justify-center pt-4">
+            <Link href="/sonic" className="text-sm text-gray-500 hover:text-gray-700 transition underline">
+              Sonic Testing
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link href="/controls-test" className="text-sm text-gray-500 hover:text-gray-700 transition underline">
+              Controls Testing
+            </Link>
+            <span className="text-gray-300">•</span>
+            <Link href="/zoom" className="text-sm text-gray-500 hover:text-gray-700 transition underline">
+              Zoom Testing
             </Link>
           </div>
 
@@ -125,10 +137,10 @@ export default function Home() {
 
             {/* Feature 6 */}
             <div className="bg-white rounded-2xl p-8 border border-gray-200/50 hover:border-gray-300 transition">
-              <div className="text-4xl mb-4">🤖</div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-3">AI Integration</h3>
+              <div className="text-4xl mb-4">🔊</div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-3">Sonic Exploration</h3>
               <p className="text-gray-600">
-                AI-assisted scene planning and Manim code generation for animations and visualizations.
+                Hear the mathematics - sonification transforms fractal patterns into immersive audio landscapes.
               </p>
             </div>
           </div>

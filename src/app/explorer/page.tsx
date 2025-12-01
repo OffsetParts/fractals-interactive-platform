@@ -87,11 +87,11 @@ const PRESET_EQUATIONS: Record<string, PresetConfig> = {
     showC: false,
     showX: false
   },
-  phoenix: { 
+  collatz: { 
     label: 'Collatz Spiral', 
     equation: 'z \\cdot \\cos^2(\\pi z a) + \\frac{3z+1}{2} \\cdot \\sin^2(\\pi z a)',
     defaultIterations: 100, 
-    materialKey: 'phoenix', 
+    materialKey: 'collatz', 
     viewport: { x: 0, y: 0, zoom: 3.0 },
     showZ: false,
     showC: true,
@@ -443,7 +443,7 @@ export default function FractalExplorer() {
         c_imag = complexY;
         break;
 
-      case 'phoenix':
+      case 'collatz':
         // Collatz Spiral: z = click position (like Julia)
         x = complexX;
         y = complexY;
@@ -562,7 +562,7 @@ export default function FractalExplorer() {
         }
         iteration = i + 1;
       }
-    } else if (currentMaterial === 'phoenix') {
+    } else if (currentMaterial === 'collatz') {
       // Collatz Spiral: smooth Collatz with rotation
       const a = 0.25 + cReal * 0.5;
       const b = cImag * Math.PI;

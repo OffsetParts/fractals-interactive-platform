@@ -1007,7 +1007,7 @@ void main() {
 
 // Collatz Fractal - Creates stunning spiraling structures
 // Based on the Collatz conjecture extended to complex plane
-export const createPhoenixMaterial = (): THREE.RawShaderMaterial => {
+export const createCollatzMaterial = (): THREE.RawShaderMaterial => {
   return new THREE.RawShaderMaterial({
     uniforms: createDefaultUniforms(),
     vertexShader: defaultVertexShader,
@@ -1265,7 +1265,7 @@ export const materials = {
   tricorn: createTricornMaterial,
   newton: createNewtonMaterial,
   spiral: createSpiralMaterial,
-  phoenix: createPhoenixMaterial,
+  collatz: createCollatzMaterial,
   magnet: createMagnetMaterial,
   ifs: createIFSMaterial,
     rgbTest: createRGBTestMaterial,
