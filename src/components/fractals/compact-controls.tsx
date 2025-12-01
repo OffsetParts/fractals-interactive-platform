@@ -99,9 +99,13 @@ const Toggle: React.FC<{
   onChange: (checked: boolean) => void;
   color?: string;
 }> = ({ label, checked, onChange, color = '#22d3ee' }) => (
-  <label className="flex items-center gap-3 cursor-pointer group">
+  <button 
+    type="button"
+    onClick={() => onChange(!checked)}
+    className="flex items-center gap-3 cursor-pointer group w-full text-left"
+  >
     <div 
-      className={`relative w-10 h-5 rounded-full transition-all duration-200 ${checked ? '' : 'bg-slate-700/50'}`}
+      className={`relative w-10 h-5 rounded-full transition-all duration-200 flex-shrink-0 ${checked ? '' : 'bg-slate-700/50'}`}
       style={{ background: checked ? `linear-gradient(135deg, ${color}, ${color}88)` : undefined }}
     >
       <div 
@@ -109,7 +113,7 @@ const Toggle: React.FC<{
       />
     </div>
     <span className="text-sm text-slate-300 group-hover:text-white transition-colors">{label}</span>
-  </label>
+  </button>
 );
 
 export function CompactControls({
@@ -265,16 +269,16 @@ export function CompactControls({
                   value={bandCenter}
                   min={0.0}
                   max={1.0}
-                  step={0.005}
+                  step={0.01}
                   onChange={(v) => onBandCenterChange?.(v)}
                   color="#f472b6"
                 />
                 <Slider
                   label="Band Width"
                   value={bandWidth}
-                  min={0.005}
+                  min={0.01}
                   max={0.2}
-                  step={0.001}
+                  step={0.01}
                   onChange={(v) => onBandWidthChange?.(v)}
                   color="#f472b6"
                 />

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { InlineMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
@@ -707,6 +707,74 @@ export default function FractalExplorer() {
                                    PRESET_EQUATIONS[currentPresetKey]?.showC || 
                                    PRESET_EQUATIONS[currentPresetKey]?.showX) ?? false;
 
+  // Generate axis numbers for complex plane overlay (memoized for performance)
+  const axisNumbers = useMemo(() => {
+    if (!interiorEnabled || windowSize.width === 0 || windowSize.height === 0) {
+      return { horizontal: [], vertical: [] };
+    }
+
+    const aspectRatio = windowSize.width / windowSize.height;
+    const viewWidth = viewport.zoom * 2 * aspectRatio;
+    const viewHeight = viewport.zoom * 2;
+
+    // Calculate nice tick interval based on zoom
+    const getNiceInterval = (range: number): number => {
+      const roughInterval = range / 8; // Aim for ~8 ticks
+      const magnitude = Math.pow(10, Math.floor(Math.log10(roughInterval)));
+      const normalized = roughInterval / magnitude;
+      let niceNormalized: number;
+      if (normalized <= 1) niceNormalized = 1;
+      else if (normalized <= 2) niceNormalized = 2;
+      else if (normalized <= 2.5) niceNormalized = 2.5;
+      else if (normalized <= 5) niceNormalized = 5;
+      else niceNormalized = 10;
+      return niceNormalized * magnitude;
+    };
+
+    // Determine precision based on interval
+    const getPrecision = (interval: number): number => {
+      if (interval >= 1) return 0;
+      if (interval >= 0.1) return 1;
+      if (interval >= 0.01) return 2;
+      return 3;
+    };
+
+    const hInterval = getNiceInterval(viewWidth);
+    const vInterval = getNiceInterval(viewHeight);
+    const hPrecision = getPrecision(hInterval);
+    const vPrecision = getPrecision(vInterval);
+
+    // Calculate visible range
+    const minX = viewport.x - viewWidth / 2;
+    const maxX = viewport.x + viewWidth / 2;
+    const minY = viewport.y - viewHeight / 2;
+    const maxY = viewport.y + viewHeight / 2;
+
+    // Generate horizontal (real) axis numbers
+    const horizontal: { value: number; screenPos: number; label: string }[] = [];
+    const startX = Math.ceil(minX / hInterval) * hInterval;
+    for (let val = startX; val <= maxX; val += hInterval) {
+      const screenX = ((val - viewport.x) / (viewport.zoom * aspectRatio) + 1) * 0.5 * windowSize.width;
+      if (screenX >= 0 && screenX <= windowSize.width) {
+        const label = Math.abs(val) < 1e-10 ? '0' : val.toFixed(hPrecision);
+        horizontal.push({ value: val, screenPos: screenX, label });
+      }
+    }
+
+    // Generate vertical (imaginary) axis numbers
+    const vertical: { value: number; screenPos: number; label: string }[] = [];
+    const startY = Math.ceil(minY / vInterval) * vInterval;
+    for (let val = startY; val <= maxY; val += vInterval) {
+      const screenY = (1 - (val - viewport.y) / viewport.zoom) * 0.5 * windowSize.height;
+      if (screenY >= 0 && screenY <= windowSize.height) {
+        const label = Math.abs(val) < 1e-10 ? '0' : `${val.toFixed(vPrecision)}i`;
+        vertical.push({ value: val, screenPos: screenY, label });
+      }
+    }
+
+    return { horizontal, vertical };
+  }, [interiorEnabled, viewport.x, viewport.y, viewport.zoom, windowSize.width, windowSize.height]);
+
   return (
     <div className="w-full h-screen relative bg-black overflow-hidden">
       {/* Full-screen THREE.js Canvas */}
@@ -822,6 +890,113 @@ export default function FractalExplorer() {
             );
           })()}
         </svg>
+      )}
+
+      {/* Complex Plane Axis Numbers Overlay */}
+      {!hideAllUI && interiorEnabled && windowSize.width > 0 && (
+        <div className="absolute inset-0 pointer-events-none z-5">
+          {/* Top edge - Real axis numbers */}
+          <div className="absolute left-0 right-0" style={{ top: '12px' }}>
+            {axisNumbers.horizontal.map((tick, i) => {
+              // Passive dock-style effect: bigger/brighter in center, smaller/faded at edges
+              const normalizedPos = tick.screenPos / windowSize.width; // 0 to 1
+              const distanceFromCenter = Math.abs(normalizedPos - 0.5) * 2; // 0 at center, 1 at edges
+              const scale = 1.3 - distanceFromCenter * 0.6; // 1.3 at center, 0.7 at edges
+              const opacity = 0.9 - distanceFromCenter * 0.5; // 0.9 at center, 0.4 at edges
+              
+              return (
+                <span
+                  key={`top-${i}`}
+                  className="absolute font-mono text-xs text-white"
+                  style={{
+                    left: tick.screenPos,
+                    transform: `translateX(-50%) scale(${scale})`,
+                    opacity,
+                    textShadow: '0 0 4px black, 0 0 8px black, 0 1px 2px black',
+                  }}
+                >
+                  {tick.label}
+                </span>
+              );
+            })}
+          </div>
+
+          {/* Bottom edge - Real axis numbers */}
+          <div className="absolute left-0 right-0" style={{ bottom: '12px' }}>
+            {axisNumbers.horizontal.map((tick, i) => {
+              const normalizedPos = tick.screenPos / windowSize.width;
+              const distanceFromCenter = Math.abs(normalizedPos - 0.5) * 2;
+              const scale = 1.3 - distanceFromCenter * 0.6;
+              const opacity = 0.9 - distanceFromCenter * 0.5;
+              
+              return (
+                <span
+                  key={`bottom-${i}`}
+                  className="absolute font-mono text-xs text-white"
+                  style={{
+                    left: tick.screenPos,
+                    transform: `translateX(-50%) scale(${scale})`,
+                    opacity,
+                    textShadow: '0 0 4px black, 0 0 8px black, 0 1px 2px black',
+                  }}
+                >
+                  {tick.label}
+                </span>
+              );
+            })}
+          </div>
+
+          {/* Left edge - Imaginary axis numbers */}
+          <div className="absolute top-0 bottom-0" style={{ left: '12px' }}>
+            {axisNumbers.vertical.map((tick, i) => {
+              const normalizedPos = tick.screenPos / windowSize.height;
+              const distanceFromCenter = Math.abs(normalizedPos - 0.5) * 2;
+              const scale = 1.3 - distanceFromCenter * 0.6;
+              const opacity = 0.9 - distanceFromCenter * 0.5;
+              
+              return (
+                <span
+                  key={`left-${i}`}
+                  className="absolute font-mono text-xs text-white"
+                  style={{
+                    top: tick.screenPos,
+                    transform: `translateY(-50%) scale(${scale})`,
+                    opacity,
+                    textShadow: '0 0 4px black, 0 0 8px black, 0 1px 2px black',
+                  }}
+                >
+                  {tick.label}
+                </span>
+              );
+            })}
+          </div>
+
+          {/* Right edge - Imaginary axis numbers */}
+          <div className="absolute top-0 bottom-0" style={{ right: '12px' }}>
+            {axisNumbers.vertical.map((tick, i) => {
+              const normalizedPos = tick.screenPos / windowSize.height;
+              const distanceFromCenter = Math.abs(normalizedPos - 0.5) * 2;
+              const scale = 1.3 - distanceFromCenter * 0.6;
+              const opacity = 0.9 - distanceFromCenter * 0.5;
+              
+              return (
+                <span
+                  key={`right-${i}`}
+                  className="absolute font-mono text-xs text-white text-right"
+                  style={{
+                    top: tick.screenPos,
+                    transform: `translateY(-50%) scale(${scale})`,
+                    transformOrigin: 'right center',
+                    opacity,
+                    textShadow: '0 0 4px black, 0 0 8px black, 0 1px 2px black',
+                  }}
+                >
+                  {tick.label}
+                </span>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* Floating Top Bar with Back Button and Title */}
@@ -941,7 +1116,7 @@ export default function FractalExplorer() {
           style={{ transform: showControls ? 'translate(0,0)' : 'translate(110%,0)' }}
         >
           <div 
-            className="w-72 pointer-events-auto max-h-[90vh] overflow-y-auto rounded-lg"
+            className="w-76 pointer-events-auto max-h-[90vh] overflow-y-auto rounded-lg"
             style={{
               background: 'rgba(15, 23, 42, 0.95)',
               border: '1px solid rgba(100, 116, 139, 0.3)',

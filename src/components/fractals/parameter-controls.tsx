@@ -29,15 +29,15 @@ const Slider: React.FC<{
   step?: number;
   onChange: (v: number) => void;
   color?: string;
-}> = ({ label, value, min, max, step = 0.001, onChange, color = '#06b6d4' }) => {
+}> = ({ label, value, min, max, step = 0.01, onChange, color = '#06b6d4' }) => {
   const percent = ((value - min) / (max - min)) * 100;
   
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2">
       <div className="flex justify-between items-center">
         <span className="text-[11px] text-gray-400">{label}</span>
         <span className="text-xs text-white font-mono bg-gray-800 px-2 py-0.5 rounded border border-gray-700">
-          {value.toFixed(3)}
+          {value.toFixed(2)}
         </span>
       </div>
       <input
@@ -60,13 +60,13 @@ const Slider: React.FC<{
   );
 };
 
-// Parameter group with header
+// Parameter group with header - vertical layout with full-width sliders
 const ParameterGroup: React.FC<{
   label: string;
   color: string;
   children: React.ReactNode;
 }> = ({ label, color, children }) => (
-  <div className="flex flex-col gap-2">
+  <div className="flex flex-col gap-3 min-w-[280px]">
     <div 
       className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded"
       style={{ 
@@ -77,7 +77,7 @@ const ParameterGroup: React.FC<{
     >
       {label}
     </div>
-    <div className="grid grid-cols-2 gap-3 px-1">
+    <div className="flex flex-col gap-4 px-1">
       {children}
     </div>
   </div>
@@ -101,7 +101,7 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
   showX = true
 }) => {
   return (
-    <div className="flex gap-6">
+    <div className="flex gap-8">
       {/* Z Parameters */}
       {showZ && (
         <ParameterGroup label="Initial Point z₀" color="#22d3ee">
