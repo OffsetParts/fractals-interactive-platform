@@ -35,8 +35,8 @@ export const AnimationControls: React.FC<AnimationControlsProps> = ({
           onClick={onTogglePlay}
           className={`w-10 h-10 rounded-lg font-medium text-lg transition-all flex items-center justify-center ${
             isPlaying
-              ? 'bg-gradient-to-br from-red-500 to-red-600 hover:from-red-400 hover:to-red-500 text-white shadow-lg shadow-red-500/25'
-              : 'bg-gradient-to-br from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white shadow-lg shadow-green-500/25'
+              ? 'bg-lienar-to-br from-red-500 to-red-600 hover:from-red-400 hover:to-red-500 text-white shadow-lg shadow-red-500/25'
+              : 'bg-linear-to-br from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white shadow-lg shadow-green-500/25'
           }`}
         >
           {isPlaying ? '⏸' : '▶'}

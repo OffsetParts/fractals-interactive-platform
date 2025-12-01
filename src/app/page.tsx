@@ -57,8 +57,8 @@ export default function Home() {
               Controls Testing
             </Link>
             <span className="text-gray-300">•</span>
-            <Link href="/zoom" className="text-sm text-gray-500 hover:text-gray-700 transition underline">
-              Zoom Testing
+            <Link href="/lectures" className="text-sm text-gray-500 hover:text-gray-700 transition underline">
+              Video Lectures
             </Link>
           </div>
 

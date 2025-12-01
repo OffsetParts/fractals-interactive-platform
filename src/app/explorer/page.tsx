@@ -1094,7 +1094,7 @@ export default function FractalExplorer() {
                   />
 
                   {/* Divider */}
-                  <div className="w-px h-auto self-stretch bg-gradient-to-b from-transparent via-gray-600 to-transparent" />
+                  <div className="w-px h-auto self-stretch bg-linear-to-b from-transparent via-gray-600 to-transparent" />
 
                   {/* Animation Controls */}
                   <AnimationControls
@@ -1199,7 +1199,7 @@ export default function FractalExplorer() {
                 onClick={() => setSonicEnabled(!sonicEnabled)}
                 className={`px-4 py-2.5 rounded-lg font-medium text-sm transition-all flex items-center gap-2 ${
                   sonicEnabled
-                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/30'
+                    ? 'bg-linear-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/30'
                     : 'bg-slate-800/60 text-slate-400 border border-slate-700/50 hover:text-white hover:border-slate-600'
                 }`}
                 title="Toggle Sonic Mode - Click anywhere to hear the fractal"
@@ -1214,7 +1214,7 @@ export default function FractalExplorer() {
                 }}
                 className={`px-4 py-2.5 rounded-lg font-medium text-sm transition-all flex items-center gap-2 ${
                   trajectoryEnabled
-                    ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-500/30'
+                    ? 'bg-linear-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-500/30'
                     : 'bg-slate-800/60 text-slate-400 border border-slate-700/50 hover:text-white hover:border-slate-600'
                 }`}
                 title="Toggle Trajectory - Click to see the iteration path"

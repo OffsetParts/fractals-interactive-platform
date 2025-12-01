@@ -46,7 +46,7 @@ const SectionHeader: React.FC<{ children: React.ReactNode; color: 'cyan' | 'purp
   };
 
   return (
-    <div className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1.5 rounded-r bg-gradient-to-r ${colorClasses[color]} border-l-2`}>
+    <div className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1.5 rounded-r bg-linear-to-r ${colorClasses[color]} border-l-2`}>
       {children}
     </div>
   );
@@ -105,7 +105,7 @@ const Toggle: React.FC<{
     className="flex items-center gap-3 cursor-pointer group w-full text-left"
   >
     <div 
-      className={`relative w-10 h-5 rounded-full transition-all duration-200 flex-shrink-0 ${checked ? '' : 'bg-slate-700/50'}`}
+      className={`relative w-10 h-5 rounded-full transition-all duration-200 shrink-0 ${checked ? '' : 'bg-slate-700/50'}`}
       style={{ background: checked ? `linear-gradient(135deg, ${color}, ${color}88)` : undefined }}
     >
       <div 
@@ -322,7 +322,7 @@ export function CompactControls({
       {/* ═══ RESET ═══ */}
       <button
         onClick={onReset}
-        className="w-full py-2.5 px-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-sm font-medium rounded-lg transition-all shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 flex items-center justify-center gap-2"
+        className="w-full py-2.5 px-4 bg-linear-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-sm font-medium rounded-lg transition-all shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 flex items-center justify-center gap-2"
       >
         <span>🏠</span>
         <span>Reset View</span>
